@@ -116,5 +116,141 @@ public class CannonView extends SurfaceView
         backgroundPaint = new Paint();
         backgroundPaint.setColor(Color.WHITE);
     }
-}
+
+    // called when the size of the SurfaceView changes,
+    // such as when it's first added to the View hierarchy
+    @Override
+    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        super.onSizeChanged(w, h, oldw, oldh);
+
+        screenWidth = w;   // guarda a largura nova da tela
+        screenHeight = h;  // guarda a altura nova da tela
+
+        // ajusta o tamanho da letra do cronômetro
+        textPaint.setTextSize((int) (TEXT_SIZE_PERCENT * screenHeight));
+        textPaint.setAntiAlias(true); // deixa a letra lisa, sem serrilhado
+    }
+
+    // devolve a largura da tela (a "fita métrica")
+    public int getScreenWidth() {
+        return screenWidth;
+    }
+
+    // devolve a altura da tela
+    public int getScreenHeight() {
+        return screenHeight;
+    }
+
+    // toca o som que está guardado na gaveta "soundId"
+    public void playSound(int soundId) {
+        soundPool.play(soundMap.get(soundId), 1, 1, 1, 0, 1f);
+    }
+
+    // reset all the screen elements and start a new game
+    public void newGame() {
+        // fabrica um canhao novo, do tamanho da tela
+        cannon = new Cannon(this,
+                (int) (CANNON_BASE_RADIUS_PERCENT * screenHeight),
+                (int) (CANNON_BARREL_LENGTH_PERCENT * screenWidth),
+                (int) (CANNON_BARREL_WIDTH_PERCENT * screenHeight));
+
+        Random random = new Random();        // dado pra sortear velocidade dos alvos
+        targets = new ArrayList<>();         // lista vazia onde vamos por os 9 alvos
+
+        // x do PRIMEIRO alvo (contando da esquerda)
+        int targetX = (int) (TARGET_FIRST_X_PERCENT * screenWidth);
+
+        // y dos alvos: deixa todos na altura do MEIO da tela
+        int targetY = (int) ((0.5 - TARGET_LENGTH_PERCENT / 2) *
+                screenHeight);
+
+        // repete 9 vezes, uma por alvo (n = 0,1,2,...,8)
+        for (int n = 0; n < TARGET_PIECES; n++) {
+
+            // sorteia uma velocidade "entre mín e máx", escalada pela altura da tela
+            double velocity = screenHeight * (random.nextDouble() *
+                    (TARGET_MAX_SPEED_PERCENT - TARGET_MIN_SPEED_PERCENT) +
+                    TARGET_MIN_SPEED_PERCENT);
+
+            // alterna a cor dos alvos entre azul (dark) e amarelo (light)
+            int color = (n % 2 == 0) ?
+                    getResources().getColor(R.color.dark,
+                            getContext().getTheme()) :
+                    getResources().getColor(R.color.light,
+                            getContext().getTheme());
+
+            velocity *= -1; // inverte o sinal da velocidade sorteada
+
+            // monta o alvo e enfia na fila (lista)
+            targets.add(new Target(this, color, HIT_REWARD, targetX, targetY,
+                    (int) (TARGET_WIDTH_PERCENT * screenWidth),
+                    (int) (TARGET_LENGTH_PERCENT * screenHeight),
+                    (int) velocity));
+            // anda pra direita: largura do alvo atual + uma fresta de espaco
+            targetX += (int) (TARGET_WIDTH_PERCENT * screenWidth +
+                    TARGET_SPACING_PERCENT * screenWidth);
+        } // fecha a esteira (o laço for) — os 9 alvos ja estao na fila
+        // fabrica o ESCUDO (um só) no meio da tela, cor amarela, subindo/descendo
+        // fabrica o ESCUDO (um so) no meio da tela, cor PRETA, subindo/descendo
+        blocker = new Blocker(this, Color.BLACK, MISS_PENALTY,
+                (int) (BLOCKER_X_PERCENT * screenWidth),
+                (int) ((0.5 - BLOCKER_LENGTH_PERCENT / 2) * screenHeight),
+                (int) (BLOCKER_WIDTH_PERCENT * screenWidth),
+                (int) (BLOCKER_LENGTH_PERCENT * screenHeight),
+                (float) (BLOCKER_SPEED_PERCENT * screenHeight));
+
+        // zera o relogio (10s) e o placar antes de comecar a partida
+        timeLeft = 10;             // o cronometro comeca em 10 segundos e DESCE
+        shotsFired = 0;            // contador de tiros
+        totalElapsedTime = 0.0;    // tempo total decorrido
+
+        // se e um recomeco (a partida anterior tinha acabado), fabrica um motor NOVO
+        if (gameOver) {
+            gameOver = false;                              // marca que agora esta rolando
+            cannonThread = new CannonThread(getHolder());  // motor novo (o velho morreu)
+            cannonThread.start();                          // da a partida nele
+        }
+
+        hideSystemBars(); // esconde as barrinhas do celular (modo imersivo)
+    } // fecha o newGame// fecha o newGame
+
+    // chamado repetidamente pela CannonThread pra mexer nas pecas
+    private void updatePositions(double elapsedTimeMS) {
+        double interval = elapsedTimeMS / 1000.0;   // passa de milissegundos p/ segundos
+
+        // se existe uma bola voando, da o empurrao nela
+        if (cannon.getCannonball() != null)
+            cannon.getCannonball().update(interval);
+
+        blocker.update(interval);   // da o empurrao no escudo
+
+        for (GameElement target : targets)   // da o empurrao em cada um dos alvos
+            target.update(interval);
+        timeLeft -= interval;   // o relogio "sangra" o tempo que passou
+        // se o relogio chegou a zero -> perdeu
+        if (timeLeft <= 0) {
+            timeLeft = 0.0;                              // trava em 0 (evita negativo na tela)
+            gameOver = true;                             // marca que a partida acabou
+            cannonThread.setRunning(false);              // desliga o motor
+            showGameOverDialog(R.string.lose);           // janelinha "You lose!"
+        }
+
+        // se acabaram todos os alvos -> ganhou
+        if (targets.isEmpty()) {
+            cannonThread.setRunning(false);              // desliga o motor
+            showGameOverDialog(R.string.win);            // janelinha "You win!"
+            gameOver = true;                             // marca que a partida acabou
+        }
+    } // fecha o updatePositions
+
+    // mira o canhao no ponto tocado e dispara se nao houver bola na tela
+    public void alignAndFireCannonball(MotionEvent event) {
+        // [L1] guarda a posicao do dedo como um ponto inteiro (x, y)
+        Point touchPoint = new Point((int) event.getX(),
+                (int) event.getY());
+
+        // [L2] quanto o dedo esta ACIMA (+) ou ABAIXO (-) do meio da tela
+        double centerMinusY = (screenHeight / 2 - touchPoint.y);
+
+} // fecha a classe CannonView
 
