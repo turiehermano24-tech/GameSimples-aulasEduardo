@@ -252,5 +252,9 @@ public class CannonView extends SurfaceView
         // [L2] quanto o dedo esta ACIMA (+) ou ABAIXO (-) do meio da tela
         double centerMinusY = (screenHeight / 2 - touchPoint.y);
 
+        double angle = 0;                               // [L1] prepara o angulo
+        angle = Math.atan2(touchPoint.x, centerMinusY); // [L2] o transferidor mede o grau
+        cannon.align(angle);                            // [L3] aponta o canudo nesse grau
+
 } // fecha a classe CannonView
 
