@@ -21,6 +21,7 @@ import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+
 import java.util.ArrayList;
 import java.util.Random;
 
@@ -61,14 +62,14 @@ public class CannonView extends SurfaceView
     public static final double TEXT_SIZE_PERCENT = 1.0 / 18;
 
 
-    private CannonThread cannonThread;     // 🔴 vermelho: a inner class ainda não existe (some na Etapa 13)
+    private CannonThread cannonThread;     // inner class definida no final desta classe
     private Activity activity;             // p/ mostrar o diálogo de fim no fio da GUI
     private boolean dialogIsDisplayed = false; // evita reabrir diálogo/ligar fio em cima
 
     // objetos do jogo
-    private Cannon cannon;                 // o canhão (classe já criada vazia → ok)
-    private Blocker blocker;               // o bloqueador (ok)
-    private ArrayList<Target> targets;     // lista dos 9 alvos (ok)
+    private Cannon cannon;                 // o canhão
+    private Blocker blocker;               // o bloqueador
+    private ArrayList<Target> targets;     // lista dos 9 alvos
 
     // dimensões reais da tela (preenchidas em onSizeChanged)
     private int screenWidth;
@@ -92,7 +93,7 @@ public class CannonView extends SurfaceView
     private Paint backgroundPaint;         // "caneta" que limpa o fundo (branco)
 
     // constructor
-    public CannonView(Context context, AttributeSet attrs){
+    public CannonView(Context context, AttributeSet attrs) {
         super(context, attrs);                       // [L1]
         activity = (Activity) context;               // [L2]
         getHolder().addCallback(this);               // [L3]
@@ -186,11 +187,12 @@ public class CannonView extends SurfaceView
                     (int) (TARGET_WIDTH_PERCENT * screenWidth),
                     (int) (TARGET_LENGTH_PERCENT * screenHeight),
                     (int) velocity));
+
             // anda pra direita: largura do alvo atual + uma fresta de espaco
             targetX += (int) (TARGET_WIDTH_PERCENT * screenWidth +
                     TARGET_SPACING_PERCENT * screenWidth);
         } // fecha a esteira (o laço for) — os 9 alvos ja estao na fila
-        // fabrica o ESCUDO (um só) no meio da tela, cor amarela, subindo/descendo
+
         // fabrica o ESCUDO (um so) no meio da tela, cor PRETA, subindo/descendo
         blocker = new Blocker(this, Color.BLACK, MISS_PENALTY,
                 (int) (BLOCKER_X_PERCENT * screenWidth),
@@ -212,7 +214,7 @@ public class CannonView extends SurfaceView
         }
 
         hideSystemBars(); // esconde as barrinhas do celular (modo imersivo)
-    } // fecha o newGame// fecha o newGame
+    } // fecha o newGame
 
     // chamado repetidamente pela CannonThread pra mexer nas pecas
     private void updatePositions(double elapsedTimeMS) {
@@ -226,7 +228,9 @@ public class CannonView extends SurfaceView
 
         for (GameElement target : targets)   // da o empurrao em cada um dos alvos
             target.update(interval);
+
         timeLeft -= interval;   // o relogio "sangra" o tempo que passou
+
         // se o relogio chegou a zero -> perdeu
         if (timeLeft <= 0) {
             timeLeft = 0.0;                              // trava em 0 (evita negativo na tela)
@@ -256,5 +260,255 @@ public class CannonView extends SurfaceView
         angle = Math.atan2(touchPoint.x, centerMinusY); // [L2] o transferidor mede o grau
         cannon.align(angle);                            // [L3] aponta o canudo nesse grau
 
-} // fecha a classe CannonView
+        // so atira se o cano estiver livre (sem bola, ou com bola ja fora da tela)
+        if (cannon.getCannonball() == null ||
+                !cannon.getCannonball().isOnScreen()) {
+            cannon.fireCannonball();   // fabrica a bola e da o "pum"
+            ++shotsFired;              // soma 1 no contador de tiros
+        }
+    } // fecha o alignAndFireCannonball
 
+    // exibe um AlertDialog quando o jogo termina
+    private void showGameOverDialog(final int messageId) {
+        // o dialogo agora e uma classe PUBLICA ESTATICA com nome,
+        // que e o "cracha" que o Android moderno exige p/ recriar fragmentos
+        final DialogFragment gameResult = new GameResultDialog(this, messageId);
+
+        // "pula pro garcom": mostra o dialogo no fio da GUI
+        activity.runOnUiThread(
+                new Runnable() {
+                    public void run() {
+                        showSystemBars();
+                        dialogIsDisplayed = true;
+                        gameResult.setCancelable(false);
+                        gameResult.show(activity.getFragmentManager(), "results");
+                    }
+                }
+        );
+    } // fecha o showGameOverDialog
+
+    // dialog de fim — PUBLIC STATIC p/ o Android conseguir recria-lo
+    public static class GameResultDialog extends DialogFragment {
+        private final CannonView gameView;
+        private final int msgId;
+
+        GameResultDialog(CannonView gameView, int msgId) {
+            this.gameView = gameView;
+            this.msgId = msgId;
+        }
+
+        @Override
+        public Dialog onCreateDialog(Bundle bundle) {
+            AlertDialog.Builder builder =
+                    new AlertDialog.Builder(getActivity());
+
+            builder.setTitle(getResources().getString(msgId));
+
+            builder.setMessage(getResources().getString(
+                    R.string.results_format,
+                    gameView.shotsFired,
+                    gameView.totalElapsedTime));
+
+            builder.setPositiveButton(R.string.reset_game,
+                    new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            gameView.dialogIsDisplayed = false;
+                            gameView.newGame();
+                        }
+                    }
+            );
+
+            return builder.create();
+        }
+    } // fecha a classe GameResultDialog
+
+    // desenha o jogo inteiro na folha (canvas)
+    public void drawGameElements(Canvas canvas) {
+        // limpa o fundo: pinta um retangulo branco cobrindo o quadro todo
+        canvas.drawRect(0, 0, canvas.getWidth(), canvas.getHeight(),
+                backgroundPaint);
+
+        // escreve o "Time remaining" no topo (coordenadas FIXAS 50,100)
+        canvas.drawText(getResources().getString(
+                R.string.time_remaining_format, timeLeft), 50, 100, textPaint);
+
+        cannon.draw(canvas);   // desenha o canhao
+
+        // desenha a bola SO SE existir E ainda estiver na tela
+        if (cannon.getCannonball() != null &&
+                cannon.getCannonball().isOnScreen())
+            cannon.getCannonball().draw(canvas);
+
+        blocker.draw(canvas);   // desenha o escudo
+
+        // desenha cada um dos alvos que ainda restam
+        for (GameElement target : targets)
+            target.draw(canvas);
+    } // fecha o drawGameElements
+
+    // verifica se a bola colidiu com algum alvo ou com o escudo
+    public void testForCollisions() {
+        // so procura colisao se existir uma bola E ela ainda estiver na tela
+        if (cannon.getCannonball() != null &&
+                cannon.getCannonball().isOnScreen()) {
+
+            // laco POR INDICE (n), nao "de correr a fila" — porque vamos REMOVER
+            for (int n = 0; n < targets.size(); n++) {
+
+                // a bola encostou no alvo de numero n?
+                if (cannon.getCannonball().collidesWith(targets.get(n))) {
+                    targets.get(n).playSound();   // som de vidro quebrando do alvo n
+
+                    // soma o bônus de tempo que esse alvo da (+3)
+                    timeLeft += targets.get(n).getHitReward();
+
+                    cannon.removeCannonball();   // consome a bola (ela estourou e sumiu)
+                    targets.remove(n);           // tira o alvo n da fila (os de depois deslizam p/ esquerda)
+                    --n;                         // recua uma casa p/ o n++ do laço te devolver no mesmo n (não pular o que deslizou)
+                    break;                       // detector gasto: uma bola so estoura um alvo por quadro, sai do laco
+                } // fecha o if de colisao com o alvo n
+            } // fecha o for (a esteira dos alvos)
+        } // fecha o if grande ("existe bola E esta na tela?")
+        else { // caso contrario: faxina o bolso do canhao
+            cannon.removeCannonball(); // esvazia o porta-objetos (null ou bola fantasma)
+        }
+
+        // checa se a bola bateu no ESCUDO (nao dentro do if grande de antes)
+        if (cannon.getCannonball() != null &&
+                cannon.getCannonball().collidesWith(blocker)) {
+            blocker.playSound();                        // som do "toc" no escudo
+            cannon.getCannonball().reverseVelocityX();  // rebote: bola volta p/ esquerda
+            timeLeft -= blocker.getMissPenalty();       // saca 2s do relogio (o castigo)
+        }
+    } // fecha o testForCollisions
+
+    // para o jogo: chamado pelo onPause do fragmento
+    public void stopGame() {
+        if (cannonThread != null)            // so mexe se o motor existir
+            cannonThread.setRunning(false);   // manda o motor parar
+    }
+
+    // libera recursos: chamado pelo onDestroy do fragmento
+    public void releaseResources() {
+        soundPool.release();   // devolve os sons ao sistema
+        soundPool = null;      // esquece o motor de som
+    }
+
+    // chamado quando a superficie muda de tamanho
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format,
+                               int width, int height) {}
+
+    // chamado quando a superficie nasce (app abriu / voltou do fundo)
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        if (!dialogIsDisplayed) {            // sem janelinha de fim aberta?
+            newGame();                        // monta o palco
+            cannonThread = new CannonThread(holder);  // fabrica o motor
+            cannonThread.setRunning(true);    // plaquinha "rodar"
+            cannonThread.start();             // gira a ignicao
+        }
+    }
+
+    // chamado quando a superficie morre (app fechou / foi pro fundo)
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        // garante que o motor apaga de verdade antes de a tela fechar
+        boolean retry = true;
+        cannonThread.setRunning(false);      // manda o motor parar
+
+        while (retry) {
+            try {
+                cannonThread.join();           // ESPERA o motor terminar
+                retry = false;                 // se chegou aqui, terminou: sai do laço
+            }
+            catch (InterruptedException e) {
+                Log.e(TAG, "Thread interrupted", e);  // registra se foi interrompido
+            }
+        }
+    }
+
+    // chamado quando o usuario toca a tela
+    @Override
+    public boolean onTouchEvent(MotionEvent e) {
+        // descobre que TIPO de toque foi
+        int action = e.getAction();
+
+        // dedo encostou (DOWN) ou arrastou (MOVE)?
+        if (action == MotionEvent.ACTION_DOWN
+                || action == MotionEvent.ACTION_MOVE) {
+            alignAndFireCannonball(e);   // mira e dispara no ponto do dedo
+        }
+
+        return true;   // "eu cuidei deste toque"
+    }
+
+    // subclasse de Thread que controla o game loop
+    private class CannonThread extends Thread {
+        private SurfaceHolder surfaceHolder;       // p/ manipular a folha
+        private boolean threadIsRunning = true;    // ligado por padrao
+
+        // construtor: guarda a superficie
+        public CannonThread(SurfaceHolder holder) {
+            surfaceHolder = holder;
+            setName("CannonThread");                // da um nome ao fio (p/ debug)
+        }
+
+        // muda o estado "ligado/desligado"
+        public void setRunning(boolean running) {
+            threadIsRunning = running;
+        }
+
+        // o game loop em si
+        @Override
+        public void run() {
+            Canvas canvas = null;                   // a folha de desenho
+            long previousFrameTime = System.currentTimeMillis();  // hora do ultimo quadro
+
+            while (threadIsRunning) {               // gira enquanto a plaquinha estiver "on"
+                try {
+                    // pega a folha com EXCLUSIVIDADE p/ este fio
+                    canvas = surfaceHolder.lockCanvas(null);
+
+                    // tranca a superficie (cadeado: so um fio desenha por vez)
+                    synchronized (surfaceHolder) {
+                        long currentTime = System.currentTimeMillis();        // hora de agora
+                        double elapsedTimeMS = currentTime - previousFrameTime; // tempo desde o ultimo
+                        totalElapsedTime += elapsedTimeMS / 1000.0;           // acumula no relogio total
+                        updatePositions(elapsedTimeMS);   // (1) move as pecas
+                        testForCollisions();              // (2) julga colisoes
+                        drawGameElements(canvas);         // (3) desenha o quadro
+                        previousFrameTime = currentTime;  // guarda "agora" como o novo "ultimo"
+                    }
+                }
+                finally {
+                    // SEMPRE devolve a folha e mostra o que foi desenhado
+                    if (canvas != null)
+                        surfaceHolder.unlockCanvasAndPost(canvas);
+                }
+            }
+        }
+    } // fecha a CannonThread
+
+    // esconde as barrinhas do sistema e a app bar (modo imersivo)
+    private void hideSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
+            setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_FULLSCREEN |
+                            View.SYSTEM_UI_FLAG_IMMERSIVE);
+    }
+
+    // traz as barrinhas de volta (sai do modo imersivo)
+    private void showSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
+            setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
+    }
+} // fecha a classe CannonView
