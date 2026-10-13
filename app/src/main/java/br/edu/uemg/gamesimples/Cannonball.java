@@ -1,7 +1,8 @@
 package br.edu.uemg.gamesimples;
 
 import android.graphics.Canvas;
-import android.graphics.Rect;
+import android.graphics.RectF;
+import android.os.Bundle;
 
 public class Cannonball extends GameElement {
 
@@ -18,13 +19,13 @@ public class Cannonball extends GameElement {
     }
 
     // mede o raio da bola (metade do lado da "caixa")
-    private int getRadius() {
+    private float getRadius() {
         return (shape.right - shape.left) / 2;
     }
 
     // a bola esbarrou em algo E ainda está indo pra frente?
     public boolean collidesWith(GameElement element) {
-        return (Rect.intersects(shape, element.shape) && velocityX > 0);
+        return (RectF.intersects(shape, element.shape) && velocityX > 0);
     }
 
     // ainda dá pra ver a bola na tela?
@@ -40,15 +41,34 @@ public class Cannonball extends GameElement {
     // updates the Cannonball's position
     @Override
     public void update(double interval) {
-        super.update(interval);                      // [L1] deixa o molde cuidar do sobe-e-desce
-        shape.offset((int) (velocityX * interval), 0); // [L2] empurra a bola pra direita
+        // O projétil não rebate no teto/chão como os alvos.
+        shape.offset((float) (velocityX * interval), (float) (velocityY * interval));
+        // Só sai quando está totalmente fora. Ao nascer, parte da bola fica no canhão.
+        if (shape.bottom < 0 || shape.right < 0 ||
+                shape.top > view.getScreenHeight() ||
+                shape.left > view.getScreenWidth())
+            onScreen = false;
 
-        // se a bola escapou por alguma das 4 bordas da mesa...
-        if (shape.top < 0 || shape.left < 0 ||
-                shape.bottom > view.getScreenHeight() ||
-                shape.right > view.getScreenWidth())
-            onScreen = false;   // ...desliga o sinalizador: pode esquecer ela
+    }
 
+    @Override
+    Bundle saveState() {
+        Bundle state = super.saveState();
+        state.putFloat("velocityX", velocityX / view.getScreenWidth());
+        state.putBoolean("onScreen", onScreen);
+        return state;
+    }
+
+    @Override
+    void restoreState(Bundle state) {
+        super.restoreState(state);
+        // Mantém a bola circular mesmo se a proporção da janela mudar.
+        float centerX = shape.centerX();
+        float radius = shape.height() / 2;
+        shape.left = centerX - radius;
+        shape.right = centerX + radius;
+        velocityX = state.getFloat("velocityX") * view.getScreenWidth();
+        onScreen = state.getBoolean("onScreen");
     }
     // desenha a bola como círculo (em vez de caixa)
     @Override

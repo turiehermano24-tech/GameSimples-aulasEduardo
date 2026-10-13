@@ -9,6 +9,7 @@ import android.view.ViewGroup;
 
 public class MainActivityFragment extends Fragment {
     private CannonView cannonView; // custom view to display the game
+    private Bundle savedGame;
 
     // called when Fragment's view needs to be created
     @Override
@@ -22,6 +23,9 @@ public class MainActivityFragment extends Fragment {
 
         // get a reference to the CannonView
         cannonView = (CannonView) view.findViewById(R.id.cannonView);
+        if (savedInstanceState != null)
+            savedGame = savedInstanceState.getBundle("game");
+        cannonView.restoreGameState(savedGame);
         return view;
     }
 
@@ -34,17 +38,33 @@ public class MainActivityFragment extends Fragment {
         getActivity().setVolumeControlStream(AudioManager.STREAM_MUSIC);
     }
 
-    // when MainActivity is paused, terminate the game
+    @Override
+    public void onResume() {
+        super.onResume();
+        cannonView.resumeGame();
+    }
+
+    // Interrompe o loop sem descartar a partida.
     @Override
     public void onPause() {
         super.onPause();
-        cannonView.stopGame(); // terminates the game
+        cannonView.stopGame();
     }
 
-    // when MainActivity is destroyed, releases resources
     @Override
-    public void onDestroy() {
-        super.onDestroy();
+    public void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (cannonView != null) savedGame = cannonView.saveGameState();
+        outState.putBundle("game", savedGame);
+    }
+
+    // A SurfaceView e os sons pertencem à view, não à vida inteira do Fragment.
+    @Override
+    public void onDestroyView() {
+        cannonView.stopGame();
+        savedGame = cannonView.saveGameState();
         cannonView.releaseResources();
+        cannonView = null;
+        super.onDestroyView();
     }
 }

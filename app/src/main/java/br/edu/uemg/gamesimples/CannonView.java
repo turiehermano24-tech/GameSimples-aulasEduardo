@@ -2,20 +2,16 @@ package br.edu.uemg.gamesimples;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.Dialog;
-import android.app.DialogFragment;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
-import android.graphics.Point;
+import android.graphics.RectF;
 import android.media.AudioAttributes;
 import android.media.SoundPool;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.util.SparseIntArray;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
@@ -28,7 +24,6 @@ import java.util.Random;
 public class CannonView extends SurfaceView
         implements SurfaceHolder.Callback {
 
-    private static final String TAG = "CannonView";        // rótulo p/ log de erro
 
     // penalidades/bônus de tempo (em segundos)
     public static final int MISS_PENALTY = 2;              // tira 2s ao bater no blocker
@@ -62,453 +57,428 @@ public class CannonView extends SurfaceView
     public static final double TEXT_SIZE_PERCENT = 1.0 / 18;
 
 
-    private CannonThread cannonThread;     // inner class definida no final desta classe
-    private Activity activity;             // p/ mostrar o diálogo de fim no fio da GUI
-    private boolean dialogIsDisplayed = false; // evita reabrir diálogo/ligar fio em cima
+    private enum GameStatus { RUNNING, PAUSED, WON, LOST }
 
-    // objetos do jogo
-    private Cannon cannon;                 // o canhão
-    private Blocker blocker;               // o bloqueador
-    private ArrayList<Target> targets;     // lista dos 9 alvos
+    // Todo acesso ao estado da partida usa este mesmo bloqueio, inclusive o toque.
+    private final Object stateLock = new Object();
+    private final Activity activity;
+    private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint backgroundPaint = new Paint();
+    private final Paint overlayPaint = new Paint();
+    private final RectF pauseButton = new RectF();
+    private final SparseIntArray soundMap = new SparseIntArray(3);
+    private SoundPool soundPool;
+    private CannonThread cannonThread;
+    private AlertDialog resultDialog;
+    private boolean resultPending;
+    private boolean activityResumed;
+    private boolean surfaceReady;
+    private boolean resourcesReleased;
+    private boolean consumeTouchGesture;
+    private Bundle pendingState;
 
-    // dimensões reais da tela (preenchidas em onSizeChanged)
+    private Cannon cannon;
+    private Blocker blocker;
+    private ArrayList<Target> targets;
     private int screenWidth;
     private int screenHeight;
+    private GameStatus status = GameStatus.RUNNING;
+    private double timeLeft;
+    private int shotsFired;
+    private double totalElapsedTime;
 
-    // estado e estatísticas da partida
-    private boolean gameOver;              // o jogo acabou?
-    private double timeLeft;               // segundos restantes
-    private int shotsFired;                // quantos tiros o usuário deu
-    private double totalElapsedTime;       // tempo total decorrido
-
-    // IDs lógicos dos 3 sons (nós que inventamos: 0,1,2)
-    public static final int TARGET_SOUND_ID  = 0;
-    public static final int CANNON_SOUND_ID  = 1;
+    public static final int TARGET_SOUND_ID = 0;
+    public static final int CANNON_SOUND_ID = 1;
     public static final int BLOCKER_SOUND_ID = 2;
 
-    private SoundPool soundPool;           // motor que toca os efeitos
-    private SparseIntArray soundMap;       // liga nosso ID (0/1/2) ao ID real do SoundPool
-
-    private Paint textPaint;               // "caneta" do texto do cronômetro
-    private Paint backgroundPaint;         // "caneta" que limpa o fundo (branco)
-
-    // constructor
     public CannonView(Context context, AttributeSet attrs) {
-        super(context, attrs);                       // [L1]
-        activity = (Activity) context;               // [L2]
-        getHolder().addCallback(this);               // [L3]
-
-        // ---- configuração do motor de som (bloco) ----
-        AudioAttributes.Builder attrBuilder = new AudioAttributes.Builder();
-        attrBuilder.setUsage(AudioAttributes.USAGE_GAME);
-        SoundPool.Builder builder = new SoundPool.Builder();
-        builder.setMaxStreams(1);
-        builder.setAudioAttributes(attrBuilder.build());
-        soundPool = builder.build();
-
-        // ---- carregar os 3 .wav e registrar no mapa (bloco) ----
-        soundMap = new SparseIntArray(3);
-        soundMap.put(TARGET_SOUND_ID,  soundPool.load(context, R.raw.target_hit,  1));
-        soundMap.put(CANNON_SOUND_ID,  soundPool.load(context, R.raw.cannon_fire, 1));
+        super(context, attrs);
+        activity = (Activity) context;
+        getHolder().addCallback(this);
+        setFocusable(true);
+        AudioAttributes audio = new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_GAME)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build();
+        soundPool = new SoundPool.Builder().setMaxStreams(3)
+                .setAudioAttributes(audio).build();
+        soundMap.put(TARGET_SOUND_ID, soundPool.load(context, R.raw.target_hit, 1));
+        soundMap.put(CANNON_SOUND_ID, soundPool.load(context, R.raw.cannon_fire, 1));
         soundMap.put(BLOCKER_SOUND_ID, soundPool.load(context, R.raw.blocker_hit, 1));
-
-        // ---- criar as "canetas" de desenho (bloco) ----
-        textPaint = new Paint();
-        backgroundPaint = new Paint();
         backgroundPaint.setColor(Color.WHITE);
+        overlayPaint.setColor(0xCCFFFFFF);
     }
 
-    // called when the size of the SurfaceView changes,
-    // such as when it's first added to the View hierarchy
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
-
-        screenWidth = w;   // guarda a largura nova da tela
-        screenHeight = h;  // guarda a altura nova da tela
-
-        // ajusta o tamanho da letra do cronômetro
-        textPaint.setTextSize((int) (TEXT_SIZE_PERCENT * screenHeight));
-        textPaint.setAntiAlias(true); // deixa a letra lisa, sem serrilhado
+        if (w <= 0 || h <= 0) return;
+        synchronized (stateLock) {
+            Bundle saved = cannon == null ? pendingState : saveGameState();
+            screenWidth = w;
+            screenHeight = h;
+            textPaint.setTextSize((float) (TEXT_SIZE_PERCENT * h));
+            float margin = h * 0.04f;
+            float buttonHeight = Math.max(48 * getResources().getDisplayMetrics().density,
+                    h * 0.12f);
+            pauseButton.set(w - Math.max(w * 0.15f, buttonHeight * 2.4f) - margin,
+                    margin, w - margin, margin + buttonHeight);
+            createGame();
+            if (saved != null) applySavedState(saved);
+            pendingState = null;
+        }
+        startThreadIfReady();
     }
 
-    // devolve a largura da tela (a "fita métrica")
-    public int getScreenWidth() {
-        return screenWidth;
-    }
+    public int getScreenWidth() { return screenWidth; }
+    public int getScreenHeight() { return screenHeight; }
 
-    // devolve a altura da tela
-    public int getScreenHeight() {
-        return screenHeight;
-    }
-
-    // toca o som que está guardado na gaveta "soundId"
     public void playSound(int soundId) {
-        soundPool.play(soundMap.get(soundId), 1, 1, 1, 0, 1f);
+        if (soundPool != null) soundPool.play(soundMap.get(soundId), 1, 1, 1, 0, 1f);
     }
 
-    // reset all the screen elements and start a new game
-    public void newGame() {
-        // fabrica um canhao novo, do tamanho da tela
+    // Somente cria os elementos. Iniciar/parar a thread é responsabilidade do ciclo de vida.
+    private void createGame() {
         cannon = new Cannon(this,
                 (int) (CANNON_BASE_RADIUS_PERCENT * screenHeight),
                 (int) (CANNON_BARREL_LENGTH_PERCENT * screenWidth),
                 (int) (CANNON_BARREL_WIDTH_PERCENT * screenHeight));
-
-        Random random = new Random();        // dado pra sortear velocidade dos alvos
-        targets = new ArrayList<>();         // lista vazia onde vamos por os 9 alvos
-
-        // x do PRIMEIRO alvo (contando da esquerda)
+        Random random = new Random();
+        targets = new ArrayList<>();
         int targetX = (int) (TARGET_FIRST_X_PERCENT * screenWidth);
-
-        // y dos alvos: deixa todos na altura do MEIO da tela
-        int targetY = (int) ((0.5 - TARGET_LENGTH_PERCENT / 2) *
-                screenHeight);
-
-        // repete 9 vezes, uma por alvo (n = 0,1,2,...,8)
+        int targetY = (int) ((0.5 - TARGET_LENGTH_PERCENT / 2) * screenHeight);
         for (int n = 0; n < TARGET_PIECES; n++) {
-
-            // sorteia uma velocidade "entre mín e máx", escalada pela altura da tela
-            double velocity = screenHeight * (random.nextDouble() *
-                    (TARGET_MAX_SPEED_PERCENT - TARGET_MIN_SPEED_PERCENT) +
-                    TARGET_MIN_SPEED_PERCENT);
-
-            // alterna a cor dos alvos entre azul (dark) e amarelo (light)
-            int color = (n % 2 == 0) ?
-                    getResources().getColor(R.color.dark,
-                            getContext().getTheme()) :
-                    getResources().getColor(R.color.light,
-                            getContext().getTheme());
-
-            velocity *= -1; // inverte o sinal da velocidade sorteada
-
-            // monta o alvo e enfia na fila (lista)
+            float velocity = (float) (screenHeight * (TARGET_MIN_SPEED_PERCENT
+                    + random.nextDouble() * (TARGET_MAX_SPEED_PERCENT - TARGET_MIN_SPEED_PERCENT)));
+            int color = getResources().getColor(n % 2 == 0 ? R.color.dark : R.color.light,
+                    getContext().getTheme());
             targets.add(new Target(this, color, HIT_REWARD, targetX, targetY,
                     (int) (TARGET_WIDTH_PERCENT * screenWidth),
-                    (int) (TARGET_LENGTH_PERCENT * screenHeight),
-                    (int) velocity));
-
-            // anda pra direita: largura do alvo atual + uma fresta de espaco
-            targetX += (int) (TARGET_WIDTH_PERCENT * screenWidth +
-                    TARGET_SPACING_PERCENT * screenWidth);
-        } // fecha a esteira (o laço for) — os 9 alvos ja estao na fila
-
-        // fabrica o ESCUDO (um so) no meio da tela, cor PRETA, subindo/descendo
+                    (int) (TARGET_LENGTH_PERCENT * screenHeight), -velocity));
+            targetX += (int) ((TARGET_WIDTH_PERCENT + TARGET_SPACING_PERCENT) * screenWidth);
+        }
         blocker = new Blocker(this, Color.BLACK, MISS_PENALTY,
                 (int) (BLOCKER_X_PERCENT * screenWidth),
                 (int) ((0.5 - BLOCKER_LENGTH_PERCENT / 2) * screenHeight),
                 (int) (BLOCKER_WIDTH_PERCENT * screenWidth),
                 (int) (BLOCKER_LENGTH_PERCENT * screenHeight),
                 (float) (BLOCKER_SPEED_PERCENT * screenHeight));
-
-        // zera o relogio (10s) e o placar antes de comecar a partida
-        timeLeft = 10;             // o cronometro comeca em 10 segundos e DESCE
-        shotsFired = 0;            // contador de tiros
-        totalElapsedTime = 0.0;    // tempo total decorrido
-
-        // se e um recomeco (a partida anterior tinha acabado), fabrica um motor NOVO
-        if (gameOver) {
-            gameOver = false;                              // marca que agora esta rolando
-            cannonThread = new CannonThread(getHolder());  // motor novo (o velho morreu)
-            cannonThread.start();                          // da a partida nele
-        }
-
-        hideSystemBars(); // esconde as barrinhas do celular (modo imersivo)
-    } // fecha o newGame
-
-    // chamado repetidamente pela CannonThread pra mexer nas pecas
-    private void updatePositions(double elapsedTimeMS) {
-        double interval = elapsedTimeMS / 1000.0;   // passa de milissegundos p/ segundos
-
-        // se existe uma bola voando, da o empurrao nela
-        if (cannon.getCannonball() != null)
-            cannon.getCannonball().update(interval);
-
-        blocker.update(interval);   // da o empurrao no escudo
-
-        for (GameElement target : targets)   // da o empurrao em cada um dos alvos
-            target.update(interval);
-
-        timeLeft -= interval;   // o relogio "sangra" o tempo que passou
-
-        // se o relogio chegou a zero -> perdeu
-        if (timeLeft <= 0) {
-            timeLeft = 0.0;                              // trava em 0 (evita negativo na tela)
-            gameOver = true;                             // marca que a partida acabou
-            cannonThread.setRunning(false);              // desliga o motor
-            showGameOverDialog(R.string.lose);           // janelinha "You lose!"
-        }
-
-        // se acabaram todos os alvos -> ganhou
-        if (targets.isEmpty()) {
-            cannonThread.setRunning(false);              // desliga o motor
-            showGameOverDialog(R.string.win);            // janelinha "You win!"
-            gameOver = true;                             // marca que a partida acabou
-        }
-    } // fecha o updatePositions
-
-    // mira o canhao no ponto tocado e dispara se nao houver bola na tela
-    public void alignAndFireCannonball(MotionEvent event) {
-        // [L1] guarda a posicao do dedo como um ponto inteiro (x, y)
-        Point touchPoint = new Point((int) event.getX(),
-                (int) event.getY());
-
-        // [L2] quanto o dedo esta ACIMA (+) ou ABAIXO (-) do meio da tela
-        double centerMinusY = (screenHeight / 2 - touchPoint.y);
-
-        double angle = 0;                               // [L1] prepara o angulo
-        angle = Math.atan2(touchPoint.x, centerMinusY); // [L2] o transferidor mede o grau
-        cannon.align(angle);                            // [L3] aponta o canudo nesse grau
-
-        // so atira se o cano estiver livre (sem bola, ou com bola ja fora da tela)
-        if (cannon.getCannonball() == null ||
-                !cannon.getCannonball().isOnScreen()) {
-            cannon.fireCannonball();   // fabrica a bola e da o "pum"
-            ++shotsFired;              // soma 1 no contador de tiros
-        }
-    } // fecha o alignAndFireCannonball
-
-    // exibe um AlertDialog quando o jogo termina
-    private void showGameOverDialog(final int messageId) {
-        // o dialogo agora e uma classe PUBLICA ESTATICA com nome,
-        // que e o "cracha" que o Android moderno exige p/ recriar fragmentos
-        final DialogFragment gameResult = new GameResultDialog(this, messageId);
-
-        // "pula pro garcom": mostra o dialogo no fio da GUI
-        activity.runOnUiThread(
-                new Runnable() {
-                    public void run() {
-                        showSystemBars();
-                        dialogIsDisplayed = true;
-                        gameResult.setCancelable(false);
-                        gameResult.show(activity.getFragmentManager(), "results");
-                    }
-                }
-        );
-    } // fecha o showGameOverDialog
-
-    // dialog de fim — PUBLIC STATIC p/ o Android conseguir recria-lo
-    public static class GameResultDialog extends DialogFragment {
-        private final CannonView gameView;
-        private final int msgId;
-
-        GameResultDialog(CannonView gameView, int msgId) {
-            this.gameView = gameView;
-            this.msgId = msgId;
-        }
-
-        @Override
-        public Dialog onCreateDialog(Bundle bundle) {
-            AlertDialog.Builder builder =
-                    new AlertDialog.Builder(getActivity());
-
-            builder.setTitle(getResources().getString(msgId));
-
-            builder.setMessage(getResources().getString(
-                    R.string.results_format,
-                    gameView.shotsFired,
-                    gameView.totalElapsedTime));
-
-            builder.setPositiveButton(R.string.reset_game,
-                    new DialogInterface.OnClickListener() {
-                        @Override
-                        public void onClick(DialogInterface dialog, int which) {
-                            gameView.dialogIsDisplayed = false;
-                            gameView.newGame();
-                        }
-                    }
-            );
-
-            return builder.create();
-        }
-    } // fecha a classe GameResultDialog
-
-    // desenha o jogo inteiro na folha (canvas)
-    public void drawGameElements(Canvas canvas) {
-        // limpa o fundo: pinta um retangulo branco cobrindo o quadro todo
-        canvas.drawRect(0, 0, canvas.getWidth(), canvas.getHeight(),
-                backgroundPaint);
-
-        // escreve o "Time remaining" no topo (coordenadas FIXAS 50,100)
-        canvas.drawText(getResources().getString(
-                R.string.time_remaining_format, timeLeft), 50, 100, textPaint);
-
-        cannon.draw(canvas);   // desenha o canhao
-
-        // desenha a bola SO SE existir E ainda estiver na tela
-        if (cannon.getCannonball() != null &&
-                cannon.getCannonball().isOnScreen())
-            cannon.getCannonball().draw(canvas);
-
-        blocker.draw(canvas);   // desenha o escudo
-
-        // desenha cada um dos alvos que ainda restam
-        for (GameElement target : targets)
-            target.draw(canvas);
-    } // fecha o drawGameElements
-
-    // verifica se a bola colidiu com algum alvo ou com o escudo
-    public void testForCollisions() {
-        // so procura colisao se existir uma bola E ela ainda estiver na tela
-        if (cannon.getCannonball() != null &&
-                cannon.getCannonball().isOnScreen()) {
-
-            // laco POR INDICE (n), nao "de correr a fila" — porque vamos REMOVER
-            for (int n = 0; n < targets.size(); n++) {
-
-                // a bola encostou no alvo de numero n?
-                if (cannon.getCannonball().collidesWith(targets.get(n))) {
-                    targets.get(n).playSound();   // som de vidro quebrando do alvo n
-
-                    // soma o bônus de tempo que esse alvo da (+3)
-                    timeLeft += targets.get(n).getHitReward();
-
-                    cannon.removeCannonball();   // consome a bola (ela estourou e sumiu)
-                    targets.remove(n);           // tira o alvo n da fila (os de depois deslizam p/ esquerda)
-                    --n;                         // recua uma casa p/ o n++ do laço te devolver no mesmo n (não pular o que deslizou)
-                    break;                       // detector gasto: uma bola so estoura um alvo por quadro, sai do laco
-                } // fecha o if de colisao com o alvo n
-            } // fecha o for (a esteira dos alvos)
-        } // fecha o if grande ("existe bola E esta na tela?")
-        else { // caso contrario: faxina o bolso do canhao
-            cannon.removeCannonball(); // esvazia o porta-objetos (null ou bola fantasma)
-        }
-
-        // checa se a bola bateu no ESCUDO (nao dentro do if grande de antes)
-        if (cannon.getCannonball() != null &&
-                cannon.getCannonball().collidesWith(blocker)) {
-            blocker.playSound();                        // som do "toc" no escudo
-            cannon.getCannonball().reverseVelocityX();  // rebote: bola volta p/ esquerda
-            timeLeft -= blocker.getMissPenalty();       // saca 2s do relogio (o castigo)
-        }
-    } // fecha o testForCollisions
-
-    // para o jogo: chamado pelo onPause do fragmento
-    public void stopGame() {
-        if (cannonThread != null)            // so mexe se o motor existir
-            cannonThread.setRunning(false);   // manda o motor parar
+        timeLeft = 10;
+        shotsFired = 0;
+        totalElapsedTime = 0;
+        status = GameStatus.RUNNING;
     }
 
-    // libera recursos: chamado pelo onDestroy do fragmento
-    public void releaseResources() {
-        soundPool.release();   // devolve os sons ao sistema
-        soundPool = null;      // esquece o motor de som
+    public void newGame() {
+        synchronized (stateLock) {
+            if (screenWidth <= 0 || resourcesReleased) return;
+            createGame();
+        }
+        hideSystemBars();
+        startThreadIfReady();
     }
 
-    // chamado quando a superficie muda de tamanho
+    // Passos pequenos reduzem a chance de atravessar um alvo entre dois desenhos.
+    private void updateGame(double elapsedSeconds) {
+        double remaining = elapsedSeconds;
+        while (remaining > 0 && status == GameStatus.RUNNING) {
+            if (timeLeft <= 0) { status = GameStatus.LOST; break; }
+            double step = Math.min(Math.min(remaining, 1.0 / 240), timeLeft);
+            Cannonball ball = cannon.getCannonball();
+            if (ball != null) ball.update(step);
+            blocker.update(step);
+            for (Target target : targets) target.update(step);
+            totalElapsedTime += step;
+            timeLeft -= step;
+            testForCollisions();
+            if (targets.isEmpty()) status = GameStatus.WON;
+            else if (timeLeft <= 0) status = GameStatus.LOST;
+            timeLeft = Math.max(0, timeLeft);
+            remaining -= step;
+        }
+    }
+
+    private void testForCollisions() {
+        Cannonball ball = cannon.getCannonball();
+        if (ball == null) return;
+        if (!ball.isOnScreen()) { cannon.removeCannonball(); return; }
+        // O bloqueador fica antes dos alvos na trajetória.
+        if (ball.collidesWith(blocker)) {
+            blocker.playSound();
+            ball.reverseVelocityX();
+            timeLeft -= blocker.getMissPenalty();
+            return;
+        }
+        for (int n = 0; n < targets.size(); n++) {
+            if (ball.collidesWith(targets.get(n))) {
+                targets.get(n).playSound();
+                timeLeft += targets.get(n).getHitReward();
+                targets.remove(n);
+                cannon.removeCannonball();
+                break;
+            }
+        }
+    }
+
+    private boolean isFinished() {
+        return status == GameStatus.WON || status == GameStatus.LOST;
+    }
+
+    // Executado no loop com stateLock adquirido; a janela é criada na thread da interface.
+    private void requestResultDialog() {
+        if (resultPending || resultDialog != null || !activityResumed) return;
+        resultPending = true;
+        activity.runOnUiThread(() -> {
+            synchronized (stateLock) {
+                resultPending = false;
+                if (!activityResumed || !surfaceReady || resourcesReleased || !isFinished()
+                        || resultDialog != null || activity.isFinishing() || activity.isDestroyed()) return;
+                resultDialog = new AlertDialog.Builder(activity)
+                        .setTitle(status == GameStatus.WON ? R.string.win : R.string.lose)
+                        .setMessage(getResources().getString(R.string.results_format,
+                                shotsFired, totalElapsedTime))
+                        .setCancelable(false)
+                        .setPositiveButton(R.string.reset_game, (dialog, which) -> {
+                            synchronized (stateLock) { resultDialog = null; }
+                            newGame();
+                        }).create();
+                resultDialog.show();
+            }
+        });
+    }
+
+    private void drawGameElements(Canvas canvas) {
+        canvas.drawRect(0, 0, screenWidth, screenHeight, backgroundPaint);
+        textPaint.setColor(Color.BLACK);
+        textPaint.setTextAlign(Paint.Align.LEFT);
+        float textSize = (float) (TEXT_SIZE_PERCENT * screenHeight);
+        textPaint.setTextSize(textSize);
+        canvas.drawText(getResources().getString(R.string.time_remaining_format, timeLeft),
+                screenHeight * 0.04f, screenHeight * 0.09f, textPaint);
+        cannon.draw(canvas);
+        Cannonball ball = cannon.getCannonball();
+        if (ball != null && ball.isOnScreen()) ball.draw(canvas);
+        blocker.draw(canvas);
+        for (Target target : targets) target.draw(canvas);
+        if (status == GameStatus.RUNNING) {
+            textPaint.setColor(0xFF263238);
+            canvas.drawRoundRect(pauseButton, 12, 12, textPaint);
+            textPaint.setColor(Color.WHITE);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText(getResources().getString(R.string.pause_game), pauseButton.centerX(),
+                    pauseButton.centerY() - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
+        } else if (status == GameStatus.PAUSED) {
+            canvas.drawRect(0, 0, screenWidth, screenHeight, overlayPaint);
+            textPaint.setTextAlign(Paint.Align.CENTER);
+            canvas.drawText(getResources().getString(R.string.game_paused),
+                    screenWidth / 2f, screenHeight * 0.45f, textPaint);
+            textPaint.setTextSize(textSize * 0.75f);
+            canvas.drawText(getResources().getString(R.string.tap_to_continue),
+                    screenWidth / 2f, screenHeight * 0.56f, textPaint);
+        }
+    }
+
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format,
-                               int width, int height) {}
+    public boolean onTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        synchronized (stateLock) {
+            if (cannon == null || !activityResumed || !surfaceReady || isFinished()) return true;
+            if (consumeTouchGesture) {
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                    consumeTouchGesture = false;
+                return true;
+            }
+            if (status == GameStatus.PAUSED) {
+                if (action == MotionEvent.ACTION_DOWN) {
+                    status = GameStatus.RUNNING;
+                    consumeTouchGesture = true;
+                    // A retomada não dispara nem cobra o intervalo desde o último quadro pausado.
+                    if (cannonThread != null) cannonThread.resetClock = true;
+                }
+                return true;
+            }
+            if (pauseButton.contains(event.getX(), event.getY())) {
+                if (action == MotionEvent.ACTION_DOWN) {
+                    status = GameStatus.PAUSED;
+                    consumeTouchGesture = true;
+                }
+                return true;
+            }
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_MOVE) {
+                cannon.align(Math.atan2(Math.max(0, event.getX()), screenHeight / 2.0 - event.getY()));
+                Cannonball ball = cannon.getCannonball();
+                if (ball == null || !ball.isOnScreen()) {
+                    cannon.fireCannonball();
+                    shotsFired++;
+                }
+            }
+        }
+        if (action == MotionEvent.ACTION_UP) performClick();
+        return true;
+    }
 
-    // chamado quando a superficie nasce (app abriu / voltou do fundo)
+    @Override
+    public boolean performClick() { super.performClick(); return true; }
+
+    public void resumeGame() {
+        synchronized (stateLock) { activityResumed = true; }
+        hideSystemBars();
+        startThreadIfReady();
+    }
+
+    public void stopGame() {
+        synchronized (stateLock) {
+            activityResumed = false;
+            consumeTouchGesture = false;
+            if (cannon != null && status == GameStatus.RUNNING) status = GameStatus.PAUSED;
+            if (resultDialog != null) { resultDialog.dismiss(); resultDialog = null; }
+        }
+        stopThread();
+    }
+
+    // Chamados apenas na thread da interface. Nunca aguardar join segurando stateLock.
+    private void startThreadIfReady() {
+        synchronized (stateLock) {
+            if (!activityResumed || !surfaceReady || cannon == null || resourcesReleased
+                    || cannonThread != null) return;
+            cannonThread = new CannonThread(getHolder());
+            cannonThread.start();
+        }
+    }
+
+    private void stopThread() {
+        CannonThread thread = cannonThread;
+        if (thread == null) return;
+        thread.running = false;
+        thread.interrupt();
+        boolean interrupted = false;
+        while (thread.isAlive()) {
+            try { thread.join(); }
+            catch (InterruptedException e) { interrupted = true; }
+        }
+        cannonThread = null;
+        if (interrupted) Thread.currentThread().interrupt();
+    }
+
+    public void releaseResources() {
+        stopGame();
+        synchronized (stateLock) {
+            resourcesReleased = true;
+            if (soundPool != null) { soundPool.release(); soundPool = null; }
+        }
+    }
+
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
-        if (!dialogIsDisplayed) {            // sem janelinha de fim aberta?
-            newGame();                        // monta o palco
-            cannonThread = new CannonThread(holder);  // fabrica o motor
-            cannonThread.setRunning(true);    // plaquinha "rodar"
-            cannonThread.start();             // gira a ignicao
-        }
+        synchronized (stateLock) { surfaceReady = true; }
+        startThreadIfReady();
     }
 
-    // chamado quando a superficie morre (app fechou / foi pro fundo)
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        startThreadIfReady();
+    }
+
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
-        // garante que o motor apaga de verdade antes de a tela fechar
-        boolean retry = true;
-        cannonThread.setRunning(false);      // manda o motor parar
+        synchronized (stateLock) {
+            surfaceReady = false;
+            if (cannon != null && status == GameStatus.RUNNING) status = GameStatus.PAUSED;
+        }
+        stopThread();
+    }
 
-        while (retry) {
-            try {
-                cannonThread.join();           // ESPERA o motor terminar
-                retry = false;                 // se chegou aqui, terminou: sai do laço
-            }
-            catch (InterruptedException e) {
-                Log.e(TAG, "Thread interrupted", e);  // registra se foi interrompido
-            }
+    public Bundle saveGameState() {
+        synchronized (stateLock) {
+            if (cannon == null) return pendingState == null ? null : new Bundle(pendingState);
+            Bundle saved = new Bundle();
+            saved.putString("status", status.name());
+            saved.putDouble("timeLeft", timeLeft);
+            saved.putInt("shotsFired", shotsFired);
+            saved.putDouble("elapsed", totalElapsedTime);
+            saved.putBundle("cannon", cannon.saveState());
+            saved.putBundle("blocker", blocker.saveState());
+            ArrayList<Bundle> pieces = new ArrayList<>();
+            for (Target target : targets) pieces.add(target.saveState());
+            saved.putParcelableArrayList("targets", pieces);
+            return saved;
         }
     }
 
-    // chamado quando o usuario toca a tela
-    @Override
-    public boolean onTouchEvent(MotionEvent e) {
-        // descobre que TIPO de toque foi
-        int action = e.getAction();
-
-        // dedo encostou (DOWN) ou arrastou (MOVE)?
-        if (action == MotionEvent.ACTION_DOWN
-                || action == MotionEvent.ACTION_MOVE) {
-            alignAndFireCannonball(e);   // mira e dispara no ponto do dedo
+    public void restoreGameState(Bundle saved) {
+        if (saved == null) return;
+        synchronized (stateLock) {
+            if (cannon == null) pendingState = new Bundle(saved);
+            else applySavedState(saved);
         }
-
-        return true;   // "eu cuidei deste toque"
     }
 
-    // subclasse de Thread que controla o game loop
-    private class CannonThread extends Thread {
-        private SurfaceHolder surfaceHolder;       // p/ manipular a folha
-        private boolean threadIsRunning = true;    // ligado por padrao
+    private void applySavedState(Bundle saved) {
+        timeLeft = saved.getDouble("timeLeft");
+        shotsFired = saved.getInt("shotsFired");
+        totalElapsedTime = saved.getDouble("elapsed");
+        status = GameStatus.valueOf(saved.getString("status", "PAUSED"));
+        // Restaurar uma partida ativa sempre dá ao jogador tempo de se preparar.
+        if (status == GameStatus.RUNNING) status = GameStatus.PAUSED;
+        cannon.restoreState(saved.getBundle("cannon"));
+        blocker.restoreState(saved.getBundle("blocker"));
+        targets.clear();
+        ArrayList<Bundle> pieces = saved.getParcelableArrayList("targets");
+        if (pieces != null) for (Bundle piece : pieces) {
+            Target target = new Target(this, Color.BLACK, HIT_REWARD, 0, 0, 1, 1, 0);
+            target.restoreState(piece);
+            targets.add(target);
+        }
+    }
 
-        // construtor: guarda a superficie
-        public CannonThread(SurfaceHolder holder) {
-            surfaceHolder = holder;
-            setName("CannonThread");                // da um nome ao fio (p/ debug)
+    private final class CannonThread extends Thread {
+        private final SurfaceHolder holder;
+        private volatile boolean running = true;
+        private boolean resetClock;
+
+        CannonThread(SurfaceHolder holder) {
+            super("CannonThread");
+            this.holder = holder;
         }
 
-        // muda o estado "ligado/desligado"
-        public void setRunning(boolean running) {
-            threadIsRunning = running;
-        }
-
-        // o game loop em si
         @Override
         public void run() {
-            Canvas canvas = null;                   // a folha de desenho
-            long previousFrameTime = System.currentTimeMillis();  // hora do ultimo quadro
-
-            while (threadIsRunning) {               // gira enquanto a plaquinha estiver "on"
+            long previous = System.nanoTime();
+            while (running) {
+                long frameStart = System.nanoTime();
+                Canvas canvas = null;
                 try {
-                    // pega a folha com EXCLUSIVIDADE p/ este fio
-                    canvas = surfaceHolder.lockCanvas(null);
-
-                    // tranca a superficie (cadeado: so um fio desenha por vez)
-                    synchronized (surfaceHolder) {
-                        long currentTime = System.currentTimeMillis();        // hora de agora
-                        double elapsedTimeMS = currentTime - previousFrameTime; // tempo desde o ultimo
-                        totalElapsedTime += elapsedTimeMS / 1000.0;           // acumula no relogio total
-                        updatePositions(elapsedTimeMS);   // (1) move as pecas
-                        testForCollisions();              // (2) julga colisoes
-                        drawGameElements(canvas);         // (3) desenha o quadro
-                        previousFrameTime = currentTime;  // guarda "agora" como o novo "ultimo"
+                    canvas = holder.lockCanvas();
+                    synchronized (stateLock) {
+                        long now = System.nanoTime();
+                        double elapsed = resetClock ? 0 : (now - previous) / 1_000_000_000.0;
+                        resetClock = false;
+                        previous = now;
+                        if (canvas != null && running && activityResumed && surfaceReady) {
+                            if (status == GameStatus.RUNNING) updateGame(elapsed);
+                            drawGameElements(canvas);
+                            if (isFinished()) requestResultDialog();
+                        }
                     }
+                } finally {
+                    if (canvas != null) holder.unlockCanvasAndPost(canvas);
                 }
-                finally {
-                    // SEMPRE devolve a folha e mostra o que foi desenhado
-                    if (canvas != null)
-                        surfaceHolder.unlockCanvasAndPost(canvas);
+                // Limita o desenho a aproximadamente 60 quadros/s sem ocupar a CPU em espera.
+                long wait = 16_666_667 - (System.nanoTime() - frameStart);
+                if (wait > 0 && running) {
+                    try { Thread.sleep(wait / 1_000_000, (int) (wait % 1_000_000)); }
+                    catch (InterruptedException e) { running = false; }
                 }
             }
         }
-    } // fecha a CannonThread
+    }
 
-    // esconde as barrinhas do sistema e a app bar (modo imersivo)
     private void hideSystemBars() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
-            setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_IMMERSIVE);
+            setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                    View.SYSTEM_UI_FLAG_FULLSCREEN |
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
-
-    // traz as barrinhas de volta (sai do modo imersivo)
-    private void showSystemBars() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
-            setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-    }
-} // fecha a classe CannonView
+}

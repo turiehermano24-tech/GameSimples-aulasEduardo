@@ -4,6 +4,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Point;
+import android.os.Bundle;
 
 public class Cannon {
 
@@ -78,5 +79,25 @@ public class Cannon {
     // apaga a bola do bolso do canhao (quando ela sai da tela ou acerta algo)
     public void removeCannonball() {
         cannonball = null;
+    }
+
+    Bundle saveState() {
+        Bundle state = new Bundle();
+        state.putDouble("angle", barrelAngle);
+        if (cannonball != null && cannonball.isOnScreen())
+            state.putBundle("ball", cannonball.saveState());
+        return state;
+    }
+
+    void restoreState(Bundle state) {
+        align(state.getDouble("angle", Math.PI / 2));
+        Bundle ball = state.getBundle("ball");
+        if (ball != null) {
+            cannonball = new Cannonball(view, Color.BLACK,
+                    CannonView.CANNON_SOUND_ID, 0, 0, 1, 0, 0);
+            cannonball.restoreState(ball);
+        } else {
+            cannonball = null;
+        }
     }
 }
