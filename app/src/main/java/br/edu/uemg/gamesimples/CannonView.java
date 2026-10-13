@@ -86,6 +86,7 @@ public class CannonView extends SurfaceView
     private double timeLeft;
     private int shotsFired;
     private double totalElapsedTime;
+    private ScoreTracker score = new ScoreTracker();
 
     public static final int TARGET_SOUND_ID = 0;
     public static final int CANNON_SOUND_ID = 1;
@@ -164,6 +165,7 @@ public class CannonView extends SurfaceView
                 (float) (BLOCKER_SPEED_PERCENT * screenHeight));
         timeLeft = 10;
         shotsFired = 0;
+        score = new ScoreTracker();
         totalElapsedTime = 0;
         status = GameStatus.RUNNING;
     }
@@ -200,18 +202,24 @@ public class CannonView extends SurfaceView
     private void testForCollisions() {
         Cannonball ball = cannon.getCannonball();
         if (ball == null) return;
-        if (!ball.isOnScreen()) { cannon.removeCannonball(); return; }
+        if (!ball.isOnScreen()) {
+            score.registerMiss();
+            cannon.removeCannonball();
+            return;
+        }
         // O bloqueador fica antes dos alvos na trajetória.
         if (ball.collidesWith(blocker)) {
             blocker.playSound();
             ball.reverseVelocityX();
             timeLeft -= blocker.getMissPenalty();
+            score.registerMiss();
             return;
         }
         for (int n = 0; n < targets.size(); n++) {
             if (ball.collidesWith(targets.get(n))) {
                 targets.get(n).playSound();
                 timeLeft += targets.get(n).getHitReward();
+                score.registerHit();
                 targets.remove(n);
                 cannon.removeCannonball();
                 break;
@@ -235,7 +243,8 @@ public class CannonView extends SurfaceView
                 resultDialog = new AlertDialog.Builder(activity)
                         .setTitle(status == GameStatus.WON ? R.string.win : R.string.lose)
                         .setMessage(getResources().getString(R.string.results_format,
-                                shotsFired, totalElapsedTime))
+                                score.getPoints(), score.getHits(), shotsFired,
+                                score.getAccuracy(shotsFired), score.getBestStreak(), totalElapsedTime))
                         .setCancelable(false)
                         .setPositiveButton(R.string.reset_game, (dialog, which) -> {
                             synchronized (stateLock) { resultDialog = null; }
@@ -248,18 +257,15 @@ public class CannonView extends SurfaceView
 
     private void drawGameElements(Canvas canvas) {
         canvas.drawRect(0, 0, screenWidth, screenHeight, backgroundPaint);
-        textPaint.setColor(Color.BLACK);
-        textPaint.setTextAlign(Paint.Align.LEFT);
         float textSize = (float) (TEXT_SIZE_PERCENT * screenHeight);
-        textPaint.setTextSize(textSize);
-        canvas.drawText(getResources().getString(R.string.time_remaining_format, timeLeft),
-                screenHeight * 0.04f, screenHeight * 0.09f, textPaint);
         cannon.draw(canvas);
         Cannonball ball = cannon.getCannonball();
         if (ball != null && ball.isOnScreen()) ball.draw(canvas);
         blocker.draw(canvas);
         for (Target target : targets) target.draw(canvas);
+        drawScoreboard(canvas, textSize);
         if (status == GameStatus.RUNNING) {
+            textPaint.setTextSize(textSize);
             textPaint.setColor(0xFF263238);
             canvas.drawRoundRect(pauseButton, 12, 12, textPaint);
             textPaint.setColor(Color.WHITE);
@@ -268,13 +274,44 @@ public class CannonView extends SurfaceView
                     pauseButton.centerY() - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
         } else if (status == GameStatus.PAUSED) {
             canvas.drawRect(0, 0, screenWidth, screenHeight, overlayPaint);
+            textPaint.setColor(Color.BLACK);
+            textPaint.setTextSize(textSize);
             textPaint.setTextAlign(Paint.Align.CENTER);
             canvas.drawText(getResources().getString(R.string.game_paused),
                     screenWidth / 2f, screenHeight * 0.45f, textPaint);
             textPaint.setTextSize(textSize * 0.75f);
             canvas.drawText(getResources().getString(R.string.tap_to_continue),
                     screenWidth / 2f, screenHeight * 0.56f, textPaint);
+            drawFittedText(canvas, getResources().getString(R.string.combo_help),
+                    screenWidth / 2f, screenHeight * 0.66f,
+                    screenWidth * 0.9f, textSize * 0.65f);
         }
+    }
+
+    private void drawScoreboard(Canvas canvas, float textSize) {
+        float margin = screenHeight * 0.04f;
+        // O placar ocupa a área à esquerda do bloqueador, sem esconder os alvos.
+        float availableWidth = screenWidth * (float) BLOCKER_X_PERCENT - 2 * margin;
+        float columnWidth = availableWidth / 2;
+        textPaint.setTextAlign(Paint.Align.LEFT);
+        textPaint.setColor(Color.BLACK);
+        drawFittedText(canvas, getResources().getString(R.string.time_remaining_format, timeLeft),
+                margin, screenHeight * 0.09f, columnWidth - margin / 2, textSize);
+        drawFittedText(canvas, getResources().getString(R.string.score_format, score.getPoints()),
+                margin + columnWidth, screenHeight * 0.09f, columnWidth, textSize);
+        textPaint.setColor(score.getStreak() > 0 ? 0xFF1565C0 : 0xFF455A64);
+        drawFittedText(canvas, getResources().getString(R.string.combo_format,
+                        score.getStreak(), score.getNextMultiplier()),
+                margin, screenHeight * 0.16f, availableWidth, textSize * 0.75f);
+    }
+
+    private void drawFittedText(Canvas canvas, String text, float x, float y,
+                                float maxWidth, float desiredSize) {
+        textPaint.setTextSize(desiredSize);
+        float measuredWidth = textPaint.measureText(text);
+        if (measuredWidth > maxWidth && maxWidth > 0)
+            textPaint.setTextSize(desiredSize * maxWidth / measuredWidth);
+        canvas.drawText(text, x, y, textPaint);
     }
 
     @Override
@@ -307,6 +344,8 @@ public class CannonView extends SurfaceView
                 cannon.align(Math.atan2(Math.max(0, event.getX()), screenHeight / 2.0 - event.getY()));
                 Cannonball ball = cannon.getCannonball();
                 if (ball == null || !ball.isOnScreen()) {
+                    // O toque pode chegar antes do loop remover uma bola que já saiu.
+                    if (ball != null) score.registerMiss();
                     cannon.fireCannonball();
                     shotsFired++;
                 }
@@ -395,6 +434,12 @@ public class CannonView extends SurfaceView
             saved.putDouble("timeLeft", timeLeft);
             saved.putInt("shotsFired", shotsFired);
             saved.putDouble("elapsed", totalElapsedTime);
+            Bundle points = new Bundle();
+            points.putInt("points", score.getPoints());
+            points.putInt("hits", score.getHits());
+            points.putInt("streak", score.getStreak());
+            points.putInt("bestStreak", score.getBestStreak());
+            saved.putBundle("score", points);
             saved.putBundle("cannon", cannon.saveState());
             saved.putBundle("blocker", blocker.saveState());
             ArrayList<Bundle> pieces = new ArrayList<>();
@@ -416,6 +461,10 @@ public class CannonView extends SurfaceView
         timeLeft = saved.getDouble("timeLeft");
         shotsFired = saved.getInt("shotsFired");
         totalElapsedTime = saved.getDouble("elapsed");
+        Bundle points = saved.getBundle("score");
+        score = points == null ? new ScoreTracker() : new ScoreTracker(
+                points.getInt("points"), points.getInt("hits"),
+                points.getInt("streak"), points.getInt("bestStreak"));
         status = GameStatus.valueOf(saved.getString("status", "PAUSED"));
         // Restaurar uma partida ativa sempre dá ao jogador tempo de se preparar.
         if (status == GameStatus.RUNNING) status = GameStatus.PAUSED;

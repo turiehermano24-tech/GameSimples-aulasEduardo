@@ -1,11 +1,14 @@
 <resources>
 
     <string name="app_name">GameSimples</string>
-    <string name="results_format">Disparos: %1$d\nTempo de jogo: %2$.1f s</string>
+    <string name="results_format">Pontuação: %1$d pontos\nAcertos: %2$d de %3$d disparos (%4$d%%)\nMelhor sequência: %5$d\nTempo de jogo: %6$.1f s</string>
     <string name="reset_game">Jogar novamente</string>
     <string name="win">Você venceu!</string>
     <string name="lose">Tempo esgotado!</string>
     <string name="time_remaining_format">Tempo: %.1f s</string>
+    <string name="score_format">Pontos: %1$d</string>
+    <string name="combo_format">Sequência: %1$d  |  Próximo acerto: x%2$d</string>
+    <string name="combo_help">Acertos seguidos valem de 100 a 500 pontos. Errar quebra a sequência.</string>
     <string name="pause_game">Pausar</string>
     <string name="game_paused">Jogo pausado</string>
     <string name="tap_to_continue">Toque para continuar</string>

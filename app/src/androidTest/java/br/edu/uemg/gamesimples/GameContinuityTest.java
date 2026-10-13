@@ -139,6 +139,7 @@ public class GameContinuityTest {
                 saved.putDouble("timeLeft", 7.25);
                 saved.putDouble("elapsed", 4.5);
                 saved.putInt("shotsFired", 3);
+                saved.putBundle("score", scoreState(300, 2, 2, 2));
                 ArrayList<Bundle> targets = saved.getParcelableArrayList("targets");
                 targets.remove(0);
                 targets.remove(0);
@@ -156,6 +157,10 @@ public class GameContinuityTest {
             assertEquals(4.5, restored.getDouble("elapsed"), 0);
             assertEquals(3, restored.getInt("shotsFired"));
             assertEquals(7, restored.getParcelableArrayList("targets").size());
+            assertEquals(300, restored.getBundle("score").getInt("points"));
+            assertEquals(2, restored.getBundle("score").getInt("hits"));
+            assertEquals(2, restored.getBundle("score").getInt("streak"));
+            assertEquals(2, restored.getBundle("score").getInt("bestStreak"));
             Bundle ballBefore = before.getBundle("cannon").getBundle("ball");
             Bundle ballAfter = restored.getBundle("cannon").getBundle("ball");
             assertNotNull(ballAfter);
@@ -173,6 +178,7 @@ public class GameContinuityTest {
                 Bundle saved = game.saveGameState();
                 saved.putString("status", "LOST");
                 saved.putDouble("timeLeft", 0);
+                saved.putBundle("score", scoreState(600, 3, 0, 3));
                 game.restoreGameState(saved);
             });
             SystemClock.sleep(150);
@@ -180,11 +186,15 @@ public class GameContinuityTest {
             scenario.recreate();
             SystemClock.sleep(150);
             onView(withText(R.string.lose)).inRoot(isDialog()).check(matches(isDisplayed()));
+            assertEquals(600, snapshot(scenario).getBundle("score").getInt("points"));
             onView(withText(R.string.reset_game)).inRoot(isDialog()).perform(click());
             Bundle restarted = snapshot(scenario);
             assertEquals("RUNNING", restarted.getString("status"));
             assertEquals(9, restarted.getParcelableArrayList("targets").size());
             assertEquals(0, restarted.getInt("shotsFired"));
+            assertEquals(0, restarted.getBundle("score").getInt("points"));
+            assertEquals(0, restarted.getBundle("score").getInt("streak"));
+            assertEquals(0, restarted.getBundle("score").getInt("bestStreak"));
             assertTrue(restarted.getDouble("timeLeft") > 8);
             assertEquals(1, gameThreadCount());
         }
@@ -198,6 +208,8 @@ public class GameContinuityTest {
                 game.stopGame();
                 Bundle saved = game.saveGameState();
                 saved.putDouble("timeLeft", 0.05);
+                saved.putInt("shotsFired", 9);
+                saved.putBundle("score", scoreState(3000, 8, 8, 8));
                 int y = game.getScreenHeight() / 2;
                 ArrayList<Bundle> targets = new ArrayList<>();
                 targets.add(new Target(game, Color.BLUE, 3, 200, y, 30, 100, 0).saveState());
@@ -213,7 +225,10 @@ public class GameContinuityTest {
             assertEquals("WON", won.getString("status"));
             assertTrue(won.getParcelableArrayList("targets").isEmpty());
             assertTrue(won.getDouble("timeLeft") > 3);
+            assertEquals(3500, won.getBundle("score").getInt("points"));
+            assertEquals(9, won.getBundle("score").getInt("bestStreak"));
             onView(withText(R.string.win)).inRoot(isDialog()).check(matches(isDisplayed()));
+            captureScreen("score-result.png");
         }
     }
 
@@ -225,6 +240,8 @@ public class GameContinuityTest {
                 game.stopGame();
                 Bundle saved = game.saveGameState();
                 saved.putDouble("timeLeft", 1);
+                saved.putInt("shotsFired", 3);
+                saved.putBundle("score", scoreState(300, 2, 2, 2));
                 int y = game.getScreenHeight() / 2;
                 saved.putBundle("blocker", new Blocker(game, Color.BLACK, 2,
                         200, y, 30, 100, 0).saveState());
@@ -239,9 +256,89 @@ public class GameContinuityTest {
             assertEquals("LOST", lost.getString("status"));
             assertEquals(0, lost.getDouble("timeLeft"), 0);
             assertEquals(9, lost.getParcelableArrayList("targets").size());
+            assertEquals(300, lost.getBundle("score").getInt("points"));
+            assertEquals(0, lost.getBundle("score").getInt("streak"));
+            assertEquals(2, lost.getBundle("score").getInt("bestStreak"));
             onView(withText(R.string.lose)).inRoot(isDialog()).check(matches(isDisplayed()));
             captureScreen("result.png");
         }
+    }
+
+    @Test
+    public void hitAwardsComboOnceAndKeepsOriginalTimeBonus() {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                CannonView game = view(activity);
+                game.stopGame();
+                Bundle saved = game.saveGameState();
+                saved.putDouble("timeLeft", 4);
+                saved.putInt("shotsFired", 2);
+                saved.putBundle("score", scoreState(100, 1, 1, 1));
+                int y = game.getScreenHeight() / 2;
+                ArrayList<Bundle> targets = saved.getParcelableArrayList("targets");
+                targets.remove(0); // Um alvo já foi destruído pelo primeiro disparo.
+                targets.set(0, new Target(game, Color.BLUE, 3, 200, y, 30, 100, 0).saveState());
+                saved.putParcelableArrayList("targets", targets);
+                saved.getBundle("cannon").putBundle("ball",
+                        new Cannonball(game, Color.BLACK, 1, 190, y + 20, 20, 100, 0).saveState());
+                game.restoreGameState(saved);
+                game.resumeGame();
+                tap(game, game.getScreenWidth() / 2f, y);
+            });
+            SystemClock.sleep(250);
+            Bundle saved = snapshot(scenario);
+            assertEquals("RUNNING", saved.getString("status"));
+            assertEquals(300, saved.getBundle("score").getInt("points"));
+            assertEquals(2, saved.getBundle("score").getInt("streak"));
+            assertEquals(7, saved.getParcelableArrayList("targets").size());
+            assertTrue(saved.getDouble("timeLeft") > 5);
+            assertTrue(saved.getDouble("timeLeft") <= 7);
+            captureScreen("score-hud.png");
+            scenario.onActivity(activity -> {
+                CannonView game = view(activity);
+                tap(game, game.getScreenWidth() * 0.9f, game.getScreenHeight() * 0.1f);
+            });
+            Bundle paused = snapshot(scenario);
+            assertEquals("PAUSED", paused.getString("status"));
+            SystemClock.sleep(150);
+            assertEquals(300, snapshot(scenario).getBundle("score").getInt("points"));
+            assertEquals(2, snapshot(scenario).getBundle("score").getInt("streak"));
+        }
+    }
+
+    @Test
+    public void shotLeavingScreenBreaksComboWithoutTimePenalty() {
+        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+            scenario.onActivity(activity -> {
+                CannonView game = view(activity);
+                game.stopGame();
+                Bundle saved = game.saveGameState();
+                saved.putDouble("timeLeft", 9);
+                saved.putBundle("score", scoreState(300, 2, 2, 2));
+                saved.getBundle("cannon").putBundle("ball",
+                        new Cannonball(game, Color.BLACK, 1, game.getScreenWidth() + 10,
+                                200, 20, 100, 0).saveState());
+                game.restoreGameState(saved);
+                game.resumeGame();
+                tap(game, game.getScreenWidth() / 2f, game.getScreenHeight() / 2f);
+            });
+            SystemClock.sleep(250);
+            Bundle saved = snapshot(scenario);
+            assertEquals(300, saved.getBundle("score").getInt("points"));
+            assertEquals(0, saved.getBundle("score").getInt("streak"));
+            assertEquals(2, saved.getBundle("score").getInt("bestStreak"));
+            assertNull(saved.getBundle("cannon").getBundle("ball"));
+            assertTrue(saved.getDouble("timeLeft") > 8);
+        }
+    }
+
+    private Bundle scoreState(int points, int hits, int streak, int bestStreak) {
+        Bundle score = new Bundle();
+        score.putInt("points", points);
+        score.putInt("hits", hits);
+        score.putInt("streak", streak);
+        score.putInt("bestStreak", bestStreak);
+        return score;
     }
 
     private void captureScreen(String name) {
