@@ -1,11 +1,113 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
-
+    android:layout_width="match_parent" android:layout_height="match_parent">
     <br.edu.uemg.gamesimples.CannonView
         android:id="@+id/cannonView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:visibility="invisible" />
 
+    <LinearLayout
+        android:id="@+id/mainMenu"
+        android:layout_width="match_parent" android:layout_height="match_parent"
+        android:background="@drawable/menu_background"
+        android:baselineAligned="false" android:orientation="horizontal"
+        android:paddingStart="28dp" android:paddingEnd="28dp"
+        android:paddingTop="20dp" android:paddingBottom="20dp">
+        <ScrollView
+            android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1.15" android:layout_marginEnd="32dp"
+            android:fillViewport="true" android:scrollbars="none">
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:gravity="center">
+                <TextView
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/menu_eyebrow" android:textColor="#FF9B92"
+                    android:textSize="11sp" android:letterSpacing="0.18"
+                    android:fontFamily="monospace" android:gravity="center" />
+                <br.edu.uemg.gamesimples.PixelBannerView
+                    android:layout_width="match_parent" android:layout_height="248dp"
+                    android:contentDescription="@string/menu_title" />
+                <TextView
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/menu_subtitle" android:textColor="#B1C0DA"
+                    android:fontFamily="monospace" android:textSize="12sp"
+                    android:gravity="center" android:letterSpacing="0.05" />
+                <TextView
+                    android:id="@+id/recordText"
+                    android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp" android:paddingStart="18dp" android:paddingEnd="18dp"
+                    android:paddingTop="8dp" android:paddingBottom="8dp" android:background="@drawable/menu_panel"
+                    android:textColor="#FFD477" android:textSize="12sp"
+                    android:lineSpacingExtra="4dp" android:gravity="center"
+                    android:fontFamily="monospace" />
+            </LinearLayout>
+        </ScrollView>
+
+        <ScrollView
+            android:layout_width="0dp" android:layout_height="match_parent"
+            android:layout_weight="1" android:fillViewport="true" android:scrollbars="none">
+            <LinearLayout
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:gravity="center_vertical" android:orientation="vertical">
+                <LinearLayout
+                    android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:background="@drawable/menu_panel" android:orientation="vertical"
+                    android:padding="18dp">
+                    <View android:layout_width="32dp" android:layout_height="3dp"
+                        android:background="#FF847E" android:layout_marginBottom="10dp"
+                        android:importantForAccessibility="no" />
+                    <TextView
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="@string/menu_ready" android:textColor="#EFF5FF"
+                        android:textSize="14sp" android:fontFamily="monospace"
+                        android:textStyle="bold" android:letterSpacing="0.06"
+                        android:layout_marginBottom="14dp" />
+                    <androidx.appcompat.widget.AppCompatButton
+                        android:id="@+id/continueButton" style="@style/RetroButton"
+                        android:layout_width="match_parent" android:layout_height="52dp"
+                        android:text="@string/continue_game" android:textColor="#10282B"
+                        android:textSize="13sp" android:visibility="gone"
+                        android:layout_marginBottom="8dp"
+                        android:background="@drawable/arcade_button_continue" />
+                    <androidx.appcompat.widget.AppCompatButton
+                        android:id="@+id/playButton" style="@style/RetroButton"
+                        android:layout_width="match_parent" android:layout_height="52dp"
+                        android:text="@string/play_game" android:textColor="#17162A"
+                        android:textSize="16sp" android:background="@drawable/arcade_button_primary" />
+                    <androidx.appcompat.widget.AppCompatButton
+                        android:id="@+id/modeButton" style="@style/RetroButton"
+                        android:layout_width="match_parent" android:layout_height="48dp"
+                        android:layout_marginTop="12dp" android:text="@string/mode_classic"
+                        android:textColor="#5CE4CE" />
+                    <TextView
+                        android:id="@+id/modeDescription"
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp" android:layout_marginBottom="12dp"
+                        android:text="@string/classic_description" android:textColor="#A4B4CE"
+                        android:textSize="12sp" android:gravity="center"
+                        android:fontFamily="sans-serif" />
+                    <LinearLayout
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:baselineAligned="false">
+                        <androidx.appcompat.widget.AppCompatButton
+                            android:id="@+id/musicButton" style="@style/RetroButton"
+                            android:layout_width="0dp" android:layout_height="48dp"
+                            android:layout_weight="1" android:layout_marginEnd="8dp"
+                            android:text="@string/music_on" android:textSize="11sp" />
+                        <androidx.appcompat.widget.AppCompatButton
+                            android:id="@+id/helpButton" style="@style/RetroButton"
+                            android:layout_width="0dp" android:layout_height="48dp"
+                            android:layout_weight="1" android:text="@string/how_to_play"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+                    <TextView
+                        android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:layout_marginTop="14dp" android:text="@string/menu_hint"
+                        android:textColor="#7185A6" android:fontFamily="monospace"
+                        android:textSize="11sp" android:gravity="center" />
+                </LinearLayout>
+            </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
 </FrameLayout>

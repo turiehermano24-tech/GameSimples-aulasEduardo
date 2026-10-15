@@ -1,6 +1,6 @@
 <resources>
 
-    <string name="app_name">GameSimples</string>
+    <string name="app_name">Cannon Game</string>
     <string name="results_format">Pontuação: %1$d pontos\nAcertos: %2$d de %3$d disparos (%4$d%%)\nMelhor sequência: %5$d\nTempo de jogo: %6$.1f s</string>
     <string name="reset_game">Jogar novamente</string>
     <string name="win">Você venceu!</string>
@@ -12,5 +12,40 @@
     <string name="pause_game">Pausar</string>
     <string name="game_paused">Jogo pausado</string>
     <string name="tap_to_continue">Toque para continuar</string>
+    <string name="menu_eyebrow">ARCADE / 1 JOGADOR</string>
+    <string name="menu_title">CANNON\nGAME</string>
+    <string name="menu_subtitle">MIRE. ACERTE. SUPERE SEU RECORDE.</string>
+    <string name="menu_ready">ENTRE NA ARENA</string>
+    <string name="menu_hint">9 ALVOS  /  COMBOS ATÉ x5</string>
+    <string name="play_game">Jogar</string>
+    <string name="continue_game">Continuar</string>
+    <string name="new_match">Nova partida</string>
+    <string name="back_to_menu">Menu</string>
+    <string name="music_on">Música: ligada</string>
+    <string name="music_off">Música: desligada</string>
+    <string name="how_to_play">Como jogar</string>
+    <string name="game_instructions">Toque ou arraste para mirar e disparar. Só pode haver uma bola na tela.\n\nDestrua os 9 alvos antes de o tempo acabar. Cada acerto dá +3 s; atingir o bloqueador tira 2 s.\n\nAcertos consecutivos valem 100, 200, 300, 400 e até 500 pontos. Errar encerra a sequência.\n\nUse Pausar para parar o relógio. Volte ao menu pelo botão Menu na pausa ou pelo gesto Voltar do Android.</string>
+    <string name="understood">Entendi</string>
+    <string name="replace_match_title">Começar outra partida?</string>
+    <string name="replace_match_message">A partida pausada será substituída por uma nova.</string>
+    <string name="cancel">Cancelar</string>
+    <string name="mode_classic">‹  Modo: Clássico  ›</string>
+    <string name="mode_arcade">‹  Modo: Arcade  ›</string>
+    <string name="classic_description">Uma rodada. 9 alvos. 10 segundos iniciais.</string>
+    <string name="arcade_description">Fases contínuas com dificuldade crescente.</string>
+    <string name="classic_record">HI-SCORE / CLÁSSICO\n%1$06d PTS</string>
+    <string name="arcade_record">HI-SCORE / ARCADE\n%1$06d PTS  •  FASE %2$02d</string>
+    <string name="continue_mode">Continuar • %1$s</string>
+    <string name="classic_short">Clássico</string>
+    <string name="arcade_short">Arcade / Fase %1$d</string>
+    <string name="level_complete">Fase %1$d concluída!</string>
+    <string name="next_level">Próxima fase</string>
+    <string name="arcade_results">Fase %1$d • Recorde: %2$d pontos\n\n%3$s\n\nNa próxima fase: alvos mais rápidos, pontos e sequência mantidos, entre 10 e 30 segundos.</string>
+    <string name="final_record">%1$s\n\nRecorde do modo: %2$d pontos</string>
+    <string name="arcade_hud">FASE %1$d  /  ALVOS %2$d</string>
+    <string name="hit_feedback">+%1$d PTS  +3 s</string>
+    <string name="block_feedback">−2 s  /  COMBO QUEBRADO</string>
+    <string name="miss_feedback">COMBO QUEBRADO</string>
+    <string name="arcade_instructions">%1$s\n\nNo modo Arcade, complete os 9 alvos e escolha Próxima fase. Os pontos e combos continuam; o tempo restante passa para a próxima fase entre 10 e 30 s. A velocidade sobe 10%% por fase até o limite de 80%%. Os recordes são separados por modo. O seletor do menu vale para a próxima nova partida.</string>
 
 </resources>

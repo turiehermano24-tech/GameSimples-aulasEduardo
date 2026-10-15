@@ -66,6 +66,8 @@ public class CannonView extends SurfaceView
     private final Paint backgroundPaint = new Paint();
     private final Paint overlayPaint = new Paint();
     private final RectF pauseButton = new RectF();
+    private final RectF pauseMenuButton = new RectF();
+    private Runnable onMenuRequested;
     private final SparseIntArray soundMap = new SparseIntArray(3);
     private SoundPool soundPool;
     private CannonThread cannonThread;
@@ -87,6 +89,10 @@ public class CannonView extends SurfaceView
     private int shotsFired;
     private double totalElapsedTime;
     private ScoreTracker score = new ScoreTracker();
+    private boolean arcade;
+    private int level = 1;
+    private final GameRecords records;
+    private final HitFeedback feedback = new HitFeedback();
 
     public static final int TARGET_SOUND_ID = 0;
     public static final int CANNON_SOUND_ID = 1;
@@ -95,6 +101,7 @@ public class CannonView extends SurfaceView
     public CannonView(Context context, AttributeSet attrs) {
         super(context, attrs);
         activity = (Activity) context;
+        records = new GameRecords(context);
         getHolder().addCallback(this);
         setFocusable(true);
         AudioAttributes audio = new AudioAttributes.Builder()
@@ -123,6 +130,7 @@ public class CannonView extends SurfaceView
                     h * 0.12f);
             pauseButton.set(w - Math.max(w * 0.15f, buttonHeight * 2.4f) - margin,
                     margin, w - margin, margin + buttonHeight);
+            pauseMenuButton.set(w * .37f, h * .76f, w * .63f, h * .76f + buttonHeight);
             createGame();
             if (saved != null) applySavedState(saved);
             pendingState = null;
@@ -134,11 +142,32 @@ public class CannonView extends SurfaceView
     public int getScreenHeight() { return screenHeight; }
 
     public void playSound(int soundId) {
-        if (soundPool != null) soundPool.play(soundMap.get(soundId), 1, 1, 1, 0, 1f);
+        // Ganhos por efeito: tiro discreto, acerto destacado e bloqueio intermediário.
+        float volume;
+        switch (soundId) {
+            case CANNON_SOUND_ID: volume = .30f; break;
+            case TARGET_SOUND_ID: volume = .50f; break;
+            case BLOCKER_SOUND_ID: volume = .40f; break;
+            default: return;
+        }
+        if (soundPool != null)
+            soundPool.play(soundMap.get(soundId), volume, volume, 1, 0, 1f);
     }
 
     // Somente cria os elementos. Iniciar/parar a thread é responsabilidade do ciclo de vida.
     private void createGame() {
+        level = 1;
+        createRound();
+        timeLeft = 10;
+        shotsFired = 0;
+        score = new ScoreTracker();
+        totalElapsedTime = 0;
+        status = GameStatus.RUNNING;
+    }
+
+    private void createRound() {
+        feedback.clear();
+        double speed = arcade ? ArcadeRules.speedMultiplier(level) : 1;
         cannon = new Cannon(this,
                 (int) (CANNON_BASE_RADIUS_PERCENT * screenHeight),
                 (int) (CANNON_BARREL_LENGTH_PERCENT * screenWidth),
@@ -148,7 +177,7 @@ public class CannonView extends SurfaceView
         int targetX = (int) (TARGET_FIRST_X_PERCENT * screenWidth);
         int targetY = (int) ((0.5 - TARGET_LENGTH_PERCENT / 2) * screenHeight);
         for (int n = 0; n < TARGET_PIECES; n++) {
-            float velocity = (float) (screenHeight * (TARGET_MIN_SPEED_PERCENT
+            float velocity = (float) (speed * screenHeight * (TARGET_MIN_SPEED_PERCENT
                     + random.nextDouble() * (TARGET_MAX_SPEED_PERCENT - TARGET_MIN_SPEED_PERCENT)));
             int color = getResources().getColor(n % 2 == 0 ? R.color.dark : R.color.light,
                     getContext().getTheme());
@@ -162,12 +191,12 @@ public class CannonView extends SurfaceView
                 (int) ((0.5 - BLOCKER_LENGTH_PERCENT / 2) * screenHeight),
                 (int) (BLOCKER_WIDTH_PERCENT * screenWidth),
                 (int) (BLOCKER_LENGTH_PERCENT * screenHeight),
-                (float) (BLOCKER_SPEED_PERCENT * screenHeight));
-        timeLeft = 10;
-        shotsFired = 0;
-        score = new ScoreTracker();
-        totalElapsedTime = 0;
-        status = GameStatus.RUNNING;
+                (float) (speed * BLOCKER_SPEED_PERCENT * screenHeight));
+    }
+
+    public void newGame(boolean arcade) {
+        synchronized (stateLock) { this.arcade = arcade; }
+        newGame();
     }
 
     public void newGame() {
@@ -176,6 +205,19 @@ public class CannonView extends SurfaceView
             createGame();
         }
         hideSystemBars();
+        startThreadIfReady();
+    }
+
+    private void nextLevel() {
+        synchronized (stateLock) {
+            if (!arcade || status != GameStatus.WON || resourcesReleased) return;
+            level++;
+            timeLeft = ArcadeRules.nextLevelTime(timeLeft);
+            createRound();
+            status = GameStatus.RUNNING;
+            records.record(true, score.getPoints(), level);
+            if (cannonThread != null) cannonThread.resetClock = true;
+        }
         startThreadIfReady();
     }
 
@@ -191,6 +233,7 @@ public class CannonView extends SurfaceView
             for (Target target : targets) target.update(step);
             totalElapsedTime += step;
             timeLeft -= step;
+            feedback.update(step);
             testForCollisions();
             if (targets.isEmpty()) status = GameStatus.WON;
             else if (timeLeft <= 0) status = GameStatus.LOST;
@@ -203,6 +246,8 @@ public class CannonView extends SurfaceView
         Cannonball ball = cannon.getCannonball();
         if (ball == null) return;
         if (!ball.isOnScreen()) {
+            if (score.getStreak() > 0) feedback.show(getResources().getString(R.string.miss_feedback),
+                    screenWidth * .3f, screenHeight * .35f, 0xFFB43C43);
             score.registerMiss();
             cannon.removeCannonball();
             return;
@@ -213,13 +258,19 @@ public class CannonView extends SurfaceView
             ball.reverseVelocityX();
             timeLeft -= blocker.getMissPenalty();
             score.registerMiss();
+            feedback.show(getResources().getString(R.string.block_feedback),
+                    blocker.shape.centerX(), blocker.shape.centerY(), 0xFFB43C43);
             return;
         }
         for (int n = 0; n < targets.size(); n++) {
             if (ball.collidesWith(targets.get(n))) {
                 targets.get(n).playSound();
                 timeLeft += targets.get(n).getHitReward();
+                int award = ScoreTracker.BASE_POINTS * score.getNextMultiplier();
                 score.registerHit();
+                records.record(arcade, score.getPoints(), level);
+                feedback.show(getResources().getString(R.string.hit_feedback, award),
+                        targets.get(n).shape.centerX(), targets.get(n).shape.centerY(), 0xFF116B56);
                 targets.remove(n);
                 cannon.removeCannonball();
                 break;
@@ -240,15 +291,28 @@ public class CannonView extends SurfaceView
                 resultPending = false;
                 if (!activityResumed || !surfaceReady || resourcesReleased || !isFinished()
                         || resultDialog != null || activity.isFinishing() || activity.isDestroyed()) return;
+                records.record(arcade, score.getPoints(), level);
+                boolean next = arcade && status == GameStatus.WON;
+                String stats = getResources().getString(R.string.results_format,
+                        score.getPoints(), score.getHits(), shotsFired,
+                        score.getAccuracy(shotsFired), score.getBestStreak(), totalElapsedTime);
+                String title = next ? getResources().getString(R.string.level_complete, level)
+                        : getResources().getString(status == GameStatus.WON ? R.string.win : R.string.lose);
+                String message = next ? getResources().getString(R.string.arcade_results,
+                        level, records.bestScore(true), stats)
+                        : getResources().getString(R.string.final_record, stats, records.bestScore(arcade));
                 resultDialog = new AlertDialog.Builder(activity)
-                        .setTitle(status == GameStatus.WON ? R.string.win : R.string.lose)
-                        .setMessage(getResources().getString(R.string.results_format,
-                                score.getPoints(), score.getHits(), shotsFired,
-                                score.getAccuracy(shotsFired), score.getBestStreak(), totalElapsedTime))
+                        .setTitle(title)
+                        .setMessage(message)
                         .setCancelable(false)
-                        .setPositiveButton(R.string.reset_game, (dialog, which) -> {
+                        .setPositiveButton(next ? R.string.next_level : R.string.reset_game, (dialog, which) -> {
                             synchronized (stateLock) { resultDialog = null; }
-                            newGame();
+                            if (next) nextLevel();
+                            else newGame();
+                        })
+                        .setNeutralButton(R.string.back_to_menu, (dialog, which) -> {
+                            synchronized (stateLock) { resultDialog = null; }
+                            if (onMenuRequested != null) onMenuRequested.run();
                         }).create();
                 resultDialog.show();
             }
@@ -264,6 +328,7 @@ public class CannonView extends SurfaceView
         blocker.draw(canvas);
         for (Target target : targets) target.draw(canvas);
         drawScoreboard(canvas, textSize);
+        feedback.draw(canvas, screenWidth, screenHeight);
         if (status == GameStatus.RUNNING) {
             textPaint.setTextSize(textSize);
             textPaint.setColor(0xFF263238);
@@ -285,6 +350,13 @@ public class CannonView extends SurfaceView
             drawFittedText(canvas, getResources().getString(R.string.combo_help),
                     screenWidth / 2f, screenHeight * 0.66f,
                     screenWidth * 0.9f, textSize * 0.65f);
+            textPaint.setColor(0xFF263238);
+            canvas.drawRoundRect(pauseMenuButton, 12, 12, textPaint);
+            textPaint.setColor(Color.WHITE);
+            textPaint.setTextSize(textSize * .8f);
+            canvas.drawText(getResources().getString(R.string.back_to_menu),
+                    pauseMenuButton.centerX(), pauseMenuButton.centerY()
+                            - (textPaint.ascent() + textPaint.descent()) / 2, textPaint);
         }
     }
 
@@ -303,6 +375,11 @@ public class CannonView extends SurfaceView
         drawFittedText(canvas, getResources().getString(R.string.combo_format,
                         score.getStreak(), score.getNextMultiplier()),
                 margin, screenHeight * 0.16f, availableWidth, textSize * 0.75f);
+        if (arcade) {
+            textPaint.setColor(0xFF6B4B16);
+            drawFittedText(canvas, getResources().getString(R.string.arcade_hud, level, targets.size()),
+                    margin, screenHeight * .22f, availableWidth, textSize * .6f);
+        }
     }
 
     private void drawFittedText(Canvas canvas, String text, float x, float y,
@@ -326,6 +403,12 @@ public class CannonView extends SurfaceView
             }
             if (status == GameStatus.PAUSED) {
                 if (action == MotionEvent.ACTION_DOWN) {
+                    if (pauseMenuButton.contains(event.getX(), event.getY()) && onMenuRequested != null) {
+                        consumeTouchGesture = true;
+                        // Não encerrar/join a thread enquanto stateLock está adquirido.
+                        post(onMenuRequested);
+                        return true;
+                    }
                     status = GameStatus.RUNNING;
                     consumeTouchGesture = true;
                     // A retomada não dispara nem cobra o intervalo desde o último quadro pausado.
@@ -357,6 +440,28 @@ public class CannonView extends SurfaceView
 
     @Override
     public boolean performClick() { super.performClick(); return true; }
+
+    public void setOnMenuRequestedListener(Runnable listener) { onMenuRequested = listener; }
+
+    public boolean canContinueGame() {
+        synchronized (stateLock) {
+            if (cannon == null) {
+                if (pendingState == null) return false;
+                String savedStatus = pendingState.getString("status", "PAUSED");
+                return savedStatus.equals("RUNNING") || savedStatus.equals("PAUSED")
+                        || (pendingState.getBoolean("arcade") && savedStatus.equals("WON"));
+            }
+            return !isFinished() || (arcade && status == GameStatus.WON);
+        }
+    }
+
+    public void continueGame() {
+        synchronized (stateLock) {
+            if (status == GameStatus.PAUSED) status = GameStatus.RUNNING;
+            if (cannonThread != null) cannonThread.resetClock = true;
+        }
+        resumeGame();
+    }
 
     public void resumeGame() {
         synchronized (stateLock) { activityResumed = true; }
@@ -431,6 +536,8 @@ public class CannonView extends SurfaceView
             if (cannon == null) return pendingState == null ? null : new Bundle(pendingState);
             Bundle saved = new Bundle();
             saved.putString("status", status.name());
+            saved.putBoolean("arcade", arcade);
+            saved.putInt("level", level);
             saved.putDouble("timeLeft", timeLeft);
             saved.putInt("shotsFired", shotsFired);
             saved.putDouble("elapsed", totalElapsedTime);
@@ -458,6 +565,9 @@ public class CannonView extends SurfaceView
     }
 
     private void applySavedState(Bundle saved) {
+        arcade = saved.getBoolean("arcade", false);
+        level = Math.max(1, saved.getInt("level", 1));
+        feedback.clear();
         timeLeft = saved.getDouble("timeLeft");
         shotsFired = saved.getInt("shotsFired");
         totalElapsedTime = saved.getDouble("elapsed");

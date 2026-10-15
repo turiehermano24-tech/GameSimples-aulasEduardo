@@ -26,11 +26,19 @@ import static androidx.test.espresso.action.ViewActions.click;
 import static androidx.test.espresso.assertion.ViewAssertions.matches;
 import static androidx.test.espresso.matcher.ViewMatchers.isDisplayed;
 import static androidx.test.espresso.matcher.ViewMatchers.withText;
+import static androidx.test.espresso.matcher.ViewMatchers.withId;
 import static org.junit.Assert.*;
 
 /** Regressões que precisam do Canvas, Bundle e ciclo de vida reais do Android. */
 @RunWith(AndroidJUnit4.class)
 public class GameContinuityTest {
+    @org.junit.Rule public final RecordIsolationRule records = new RecordIsolationRule();
+    private ActivityScenario<MainActivity> launchGame() {
+        ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+        onView(withId(R.id.playButton)).perform(click());
+        return scenario;
+    }
+
     private CannonView view(MainActivity activity) {
         return activity.findViewById(R.id.cannonView);
     }
@@ -53,7 +61,7 @@ public class GameContinuityTest {
 
     @Test
     public void diagonalShotSurvivesFirstFrameAndKeepsFractionalMotion() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -75,7 +83,7 @@ public class GameContinuityTest {
 
     @Test
     public void movementIsConsistentAtThirtyAndOneHundredTwentyFrames() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -91,7 +99,7 @@ public class GameContinuityTest {
 
     @Test
     public void pauseFreezesTimeAndContinueDoesNotFire() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 tap(game, game.getScreenWidth() * 0.9f, game.getScreenHeight() * 0.1f);
@@ -114,7 +122,7 @@ public class GameContinuityTest {
 
     @Test
     public void backgroundReturnKeepsMatchPausedAndSingleThread() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.moveToState(Lifecycle.State.CREATED);
             Bundle before = snapshot(scenario);
             assertEquals(0, gameThreadCount());
@@ -131,7 +139,7 @@ public class GameContinuityTest {
 
     @Test
     public void recreationRestoresTargetsBallAndStatistics() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -172,7 +180,7 @@ public class GameContinuityTest {
 
     @Test
     public void restoredResultCanRestartWithoutDuplicateThread() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 Bundle saved = game.saveGameState();
@@ -202,7 +210,7 @@ public class GameContinuityTest {
 
     @Test
     public void lastTargetWinsAndAppliesTimeReward() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -234,7 +242,7 @@ public class GameContinuityTest {
 
     @Test
     public void blockerPenaltyEndsMatchOnceWithoutNegativeTime() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -266,7 +274,7 @@ public class GameContinuityTest {
 
     @Test
     public void hitAwardsComboOnceAndKeepsOriginalTimeBonus() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();
@@ -308,7 +316,7 @@ public class GameContinuityTest {
 
     @Test
     public void shotLeavingScreenBreaksComboWithoutTimePenalty() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
+        try (ActivityScenario<MainActivity> scenario = launchGame()) {
             scenario.onActivity(activity -> {
                 CannonView game = view(activity);
                 game.stopGame();

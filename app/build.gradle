@@ -3,6 +3,8 @@ plugins {
 }
 
 android {
+    // Todo o código-fonte deste módulo é Java.
+    enableKotlin = false
     namespace 'br.edu.uemg.gamesimples'
     compileSdk {
         version = release(37)
@@ -32,7 +34,7 @@ android {
 }
 
 dependencies {
-    implementation libs.activity.ktx
+    implementation libs.activity
     implementation libs.appcompat
     implementation libs.constraintlayout
     implementation libs.material
